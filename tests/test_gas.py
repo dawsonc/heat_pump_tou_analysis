@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from model import BTU_PER_THERM, compute_gas_energy
+from model import BTU_PER_THERM, compute_gas_cost, compute_gas_energy
 from presets import GAS_FURNACE_PRESETS
 
 
@@ -105,3 +105,66 @@ class TestGasCostComparison:
         therms = compute_gas_energy(heat_load, afue=0.80)
         cost = therms * 2.50
         np.testing.assert_array_equal(cost, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# TestComputeGasCost
+# ---------------------------------------------------------------------------
+
+
+class TestComputeGasCost:
+    """Tests for the formal compute_gas_cost function."""
+
+    def test_basic_cost(self) -> None:
+        """Known therms and rate produce correct cost."""
+        therms = np.array([1.0])
+        cost = compute_gas_cost(therms, gas_rate=2.50)
+        assert cost[0] == pytest.approx(2.50)
+
+    def test_zero_therms(self) -> None:
+        """Zero therms produces zero cost."""
+        therms = np.zeros(24)
+        cost = compute_gas_cost(therms, gas_rate=2.50)
+        np.testing.assert_array_equal(cost, 0.0)
+
+    def test_zero_rate(self) -> None:
+        """Zero gas rate produces zero cost."""
+        therms = np.array([1.0, 2.0])
+        cost = compute_gas_cost(therms, gas_rate=0.0)
+        np.testing.assert_array_equal(cost, 0.0)
+
+    def test_shape_preserved(self) -> None:
+        """Output shape matches input."""
+        therms = np.ones(8760)
+        cost = compute_gas_cost(therms, gas_rate=2.50)
+        assert cost.shape == (8760,)
+
+    def test_dtype_float64(self) -> None:
+        """Output dtype is float64."""
+        therms = np.array([1.0])
+        cost = compute_gas_cost(therms, gas_rate=2.50)
+        assert cost.dtype == np.float64
+
+    def test_full_pipeline(self) -> None:
+        """End-to-end: compute_gas_energy -> compute_gas_cost."""
+        heat_load = np.array([80_000.0])
+        therms = compute_gas_energy(heat_load, afue=0.80)
+        cost = compute_gas_cost(therms, gas_rate=2.50)
+        # therms = 80000 / (0.80 * 100000) = 1.0
+        # cost = 1.0 * 2.50 = 2.50
+        assert cost[0] == pytest.approx(2.50)
+
+    def test_higher_rate_higher_cost(self) -> None:
+        """Increasing gas rate increases cost proportionally."""
+        therms = np.array([1.0])
+        cost_low = compute_gas_cost(therms, gas_rate=1.50)
+        cost_high = compute_gas_cost(therms, gas_rate=3.00)
+        assert cost_high[0] == pytest.approx(2.0 * cost_low[0])
+
+    def test_matches_inline_formula(self) -> None:
+        """compute_gas_cost matches inline therms * rate."""
+        therms = np.array([0.5, 1.0, 1.5])
+        gas_rate = 2.50
+        cost_func = compute_gas_cost(therms, gas_rate)
+        cost_inline = therms * gas_rate
+        np.testing.assert_array_equal(cost_func, cost_inline)

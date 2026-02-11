@@ -10,7 +10,11 @@ Key functions:
 - compute_capacity: heating capacity derating at low outdoor temps
 - compute_hp_energy: HP kWh + backup resistance kWh
 - compute_gas_energy: gas therms from heating load and AFUE
-- compute_cost: hourly cost from kWh and rate arrays
+- compute_electric_cost: hourly electricity cost from kWh and rate arrays
+- compute_gas_cost: hourly gas cost from therms and gas rate
+- aggregate_monthly: sum hourly values into (12,) monthly totals
+- aggregate_annual: sum hourly values into scalar annual total
+- compute_peak_demand_monthly: peak hourly kW per month
 """
 
 from __future__ import annotations
@@ -289,3 +293,150 @@ def compute_gas_energy(
     """
     # spec: therms[h] = heat_load[h] / (AFUE * 100_000)
     return heat_load / (afue * BTU_PER_THERM)
+
+
+# ---------------------------------------------------------------------------
+# Cost calculations
+# ---------------------------------------------------------------------------
+
+
+def compute_electric_cost(
+    kwh: npt.NDArray[np.float64],
+    rates: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64]:
+    """Compute hourly electricity cost.
+
+    cost[h] = kwh[h] * rates[h]
+    — spec Computation Pipeline, Path A: "cost_elec[h] = kwh_total[h] × rate[h]"
+
+    Generic: pass kwh_total for total cost, or kwh_heat for heating-only
+    comparison against gas.
+
+    Parameters
+    ----------
+    kwh : (N,) array
+        Electricity consumption in kWh per hour.
+    rates : (N,) array
+        Electricity rate in $/kWh per hour (from tou_lookup).
+
+    Returns
+    -------
+    (N,) array of float64
+        Electricity cost in dollars per hour.
+
+    Raises
+    ------
+    ValueError
+        If kwh and rates have different shapes.
+    """
+    kwh = np.asarray(kwh, dtype=np.float64)
+    rates = np.asarray(rates, dtype=np.float64)
+    if kwh.shape != rates.shape:
+        raise ValueError(
+            f"Shape mismatch: kwh {kwh.shape} vs rates {rates.shape}"
+        )
+    # spec: cost_elec[h] = kwh_total[h] * rate[h]
+    return kwh * rates
+
+
+def compute_gas_cost(
+    therms: npt.NDArray[np.float64],
+    gas_rate: float,
+) -> npt.NDArray[np.float64]:
+    """Compute hourly gas cost.
+
+    cost_gas[h] = therms[h] * gas_rate
+    — spec Computation Pipeline, Path B: "cost_gas[h] = therms[h] × gas_rate"
+
+    Parameters
+    ----------
+    therms : (N,) array
+        Gas consumption in therms per hour (from compute_gas_energy).
+    gas_rate : float
+        Gas rate in $/therm.
+
+    Returns
+    -------
+    (N,) array of float64
+        Gas cost in dollars per hour.
+    """
+    # spec: cost_gas[h] = therms[h] * gas_rate
+    return np.asarray(therms, dtype=np.float64) * gas_rate
+
+
+# ---------------------------------------------------------------------------
+# Aggregation
+# ---------------------------------------------------------------------------
+
+
+def aggregate_monthly(
+    values: npt.NDArray[np.float64],
+    months: npt.NDArray[np.integer],
+) -> npt.NDArray[np.float64]:
+    """Sum hourly values into monthly totals.
+
+    Parameters
+    ----------
+    values : (N,) array
+        Hourly values to aggregate (cost, kWh, therms, etc.).
+    months : (N,) array of int
+        Month number (1-12) for each hour.
+
+    Returns
+    -------
+    (12,) array of float64
+        Monthly totals. Index 0 = January, index 11 = December.
+    """
+    values = np.asarray(values, dtype=np.float64)
+    months = np.asarray(months)
+    # months are 1-based; shift to 0-based for bincount
+    totals = np.bincount(months - 1, weights=values, minlength=12)
+    return totals[:12].astype(np.float64)
+
+
+def aggregate_annual(
+    values: npt.NDArray[np.float64],
+) -> float:
+    """Sum hourly values into a scalar annual total.
+
+    Parameters
+    ----------
+    values : (N,) array
+        Hourly values to sum.
+
+    Returns
+    -------
+    float
+        Annual total.
+    """
+    return float(np.sum(values))
+
+
+def compute_peak_demand_monthly(
+    kwh: npt.NDArray[np.float64],
+    months: npt.NDArray[np.integer],
+) -> npt.NDArray[np.float64]:
+    """Find peak hourly demand (kW) in each month.
+
+    Since each time step is 1 hour, kWh/h = kW average power.
+
+    Parameters
+    ----------
+    kwh : (N,) array
+        Hourly electricity consumption in kWh (= kW for 1-hour intervals).
+    months : (N,) array of int
+        Month number (1-12) for each hour.
+
+    Returns
+    -------
+    (12,) array of float64
+        Peak hourly demand in kW for each month. Index 0 = January.
+    """
+    kwh = np.asarray(kwh, dtype=np.float64)
+    months = np.asarray(months)
+    peak = np.zeros(12, dtype=np.float64)
+    for m in range(1, 13):
+        mask = months == m
+        if np.any(mask):
+            peak[m - 1] = np.max(kwh[mask])
+    return peak
