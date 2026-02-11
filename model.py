@@ -166,6 +166,48 @@ def compute_cop(
     return cop, lockout_mask
 
 
+def compute_cooling_cop(
+    T_out: npt.NDArray[np.float64],
+    cop_cooling_curve: list[tuple[float, float]],
+) -> npt.NDArray[np.float64]:
+    """Compute hourly cooling COP via piecewise-linear interpolation.
+
+    cop_cool[h] = piecewise_linear_interp(T_out[h], cop_cooling_curve)
+    — spec Computation Pipeline line 165: cop_cool[h] notation confirms
+      per-hour COP.
+    — spec line 74: "COP also degrades at very high outdoor temps but
+      less dramatically; a simpler linear model is acceptable."
+
+    Uses np.interp for piecewise-linear interpolation with constant
+    extrapolation beyond endpoints (holds best COP below lowest
+    reference temp, worst COP above highest reference temp).
+
+    Parameters
+    ----------
+    T_out : (N,) array
+        Outdoor dry-bulb temperature in deg F.
+    cop_cooling_curve : list of (temp_F, COP) tuples
+        Reference COP points sorted ascending by temperature.
+        COP values typically decrease with increasing temperature.
+        Example: [(82, 4.2), (95, 3.5), (115, 2.6)]
+
+    Returns
+    -------
+    (N,) array of float64
+        Cooling COP at each hour. Minimum 1.0.
+    """
+    temps = np.array([pt[0] for pt in cop_cooling_curve], dtype=np.float64)
+    cops = np.array([pt[1] for pt in cop_cooling_curve], dtype=np.float64)
+
+    # spec: piecewise-linear interpolation; np.interp clamps beyond endpoints
+    cop = np.interp(T_out, temps, cops)
+
+    # Floor at 1.0 (same safety constraint as heating COP)
+    cop = np.maximum(cop, 1.0)
+
+    return cop
+
+
 def compute_capacity(
     T_out: npt.NDArray[np.float64],
     capacity_curve: list[tuple[float, float]],
@@ -212,7 +254,7 @@ def compute_hp_energy(
     heat_load: npt.NDArray[np.float64],
     cool_load: npt.NDArray[np.float64],
     cop: npt.NDArray[np.float64],
-    cop_cool: float,
+    cop_cool: float | npt.NDArray[np.float64],
     capacity: npt.NDArray[np.float64],
     lockout_mask: npt.NDArray[np.bool_],
     has_backup: bool = True,
@@ -222,7 +264,7 @@ def compute_hp_energy(
     load_hp[h]     = min(heat_load[h], cap_hp[h])  (0 during lockout)
     load_backup[h] = heat_load[h] - load_hp[h]
     kwh_heat[h]    = load_hp[h] / (cop[h] * 3412) + load_backup[h] / 3412
-    kwh_cool[h]    = cool_load[h] / (cop_cool * 3412)
+    kwh_cool[h]    = cool_load[h] / (cop_cool[h] * 3412)
     kwh_total[h]   = kwh_heat[h] + kwh_cool[h]
     — spec Computation Pipeline, "Path A: Heat Pump Electricity Cost"
 
@@ -234,8 +276,10 @@ def compute_hp_energy(
         Cooling load in BTU/h.
     cop : (N,) array
         Heating COP at each hour (already lockout-adjusted to 1.0).
-    cop_cool : float
-        Cooling COP (constant across hours per spec simplification).
+    cop_cool : float or (N,) array of float64
+        Cooling COP. A scalar applies a constant COP to all hours.
+        An array (from compute_cooling_cop) applies per-hour COP that
+        degrades at higher outdoor temperatures per spec line 74.
     capacity : (N,) array
         Available HP heating capacity in BTU/h.
     lockout_mask : (N,) array of bool
@@ -261,7 +305,7 @@ def compute_hp_energy(
     backup_elec = load_backup / BTU_PER_KWH if has_backup else np.zeros_like(load_backup)
     kwh_heat = load_hp / (cop * BTU_PER_KWH) + backup_elec
 
-    # spec: kwh_cool[h] = cool_load[h] / (cop_cool * 3412)
+    # spec: kwh_cool[h] = cool_load[h] / (cop_cool[h] * 3412)
     kwh_cool = cool_load / (cop_cool * BTU_PER_KWH)
 
     # spec: kwh_total[h] = kwh_heat[h] + kwh_cool[h]
