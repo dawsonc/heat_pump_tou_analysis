@@ -19,8 +19,9 @@ from model import (
     aggregate_annual,
     aggregate_monthly,
     compute_capacity,
-    compute_cop,
+    compute_cooling_cop,
     compute_cooling_load,
+    compute_cop,
     compute_electric_cost,
     compute_gas_cost,
     compute_gas_energy,
@@ -207,7 +208,8 @@ class TestEndToEndCostIntegration:
         # Path A: heat pump
         cop, lockout_mask = compute_cop(T_out, hp["cop_curve"], hp["lockout_temp_f"])
         capacity = compute_capacity(T_out, hp["capacity_curve"], hp["rated_capacity_btu_h"])
-        hp_energy = compute_hp_energy(heat_load, cool_load, cop, hp["cop_cooling"], capacity, lockout_mask)
+        cop_cool = compute_cooling_cop(T_out, hp["cop_cooling_curve"])
+        hp_energy = compute_hp_energy(heat_load, cool_load, cop, cop_cool, capacity, lockout_mask)
 
         # Rates
         flat_rates = tou_lookup(months_8760, hours_of_day_8760, FLAT_RATE)

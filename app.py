@@ -30,6 +30,7 @@ from model import (
     aggregate_annual,
     aggregate_monthly,
     compute_capacity,
+    compute_cooling_cop,
     compute_cooling_load,
     compute_cop,
     compute_electric_cost,
@@ -393,8 +394,9 @@ def run_pipeline(T_out, months, days, hours_of_day, params):
     capacity = compute_capacity(
         T_out, hp["capacity_curve"], hp["rated_capacity_btu_h"]
     )
+    cop_cool = compute_cooling_cop(T_out, hp["cop_cooling_curve"])
     hp_energy = compute_hp_energy(
-        heat_load, cool_load, cop, hp["cop_cooling"], capacity, lockout_mask,
+        heat_load, cool_load, cop, cop_cool, capacity, lockout_mask,
         has_backup=params["has_backup"],
     )
 
@@ -447,6 +449,7 @@ def run_pipeline(T_out, months, days, hours_of_day, params):
         "heat_load": heat_load,
         "cool_load": cool_load,
         "cop": cop,
+        "cop_cool": cop_cool,
         "lockout_mask": lockout_mask,
         "capacity": capacity,
         "hp_energy": hp_energy,
@@ -726,6 +729,7 @@ def render_tab_diagnostics(results, params, months, days, hours_of_day):
         heat_load=results["heat_load"],
         cool_load=results["cool_load"],
         cop=results["cop"],
+        cop_cool=results["cop_cool"],
         lockout_mask=results["lockout_mask"],
         capacity=results["capacity"],
         kwh_heat=results["hp_energy"].kwh_heat,
@@ -793,6 +797,7 @@ def render_tab_diagnostics(results, params, months, days, hours_of_day):
                 hp["cop_curve"],
                 hp["lockout_temp_f"],
                 results["T_out"],
+                cop_cooling_curve=hp["cop_cooling_curve"],
             ),
             use_container_width=True,
         )

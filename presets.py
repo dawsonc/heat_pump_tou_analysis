@@ -74,8 +74,11 @@ DEFAULT_GAS_MONTHLY_CHARGE = 9.00
 #                         Without backup, load becomes unmet demand.
 #   rated_capacity_btu_h - default rated heating capacity at 47 degF (BTU/h).
 #                         User can override in the UI.
-#   cop_cooling         - single cooling COP value. Spec allows "a simpler
-#                         linear model" for cooling; constant is simplest.
+#   cop_cooling_curve   - list of (temp_F, COP) tuples for cooling mode,
+#                         sorted ascending by temp. COP decreases at higher
+#                         outdoor temps. Spec line 74: "COP also degrades
+#                         at very high outdoor temps; a simpler linear model
+#                         is acceptable." 82 degF is AHRI rated condition.
 #   has_backup_heat     - whether electric resistance backup is available.
 #                         True = resistance covers shortfall (COP=1.0).
 #                         False = unmet demand when HP capacity is exceeded
@@ -103,7 +106,15 @@ HP_PRESETS = {
         ],
         "lockout_temp_f": -15,
         "rated_capacity_btu_h": 36_000,
-        "cop_cooling": 3.8,
+        # Cooling COP curve: piecewise-linear degradation with outdoor temp.
+        # 82 deg F is the AHRI/ISO rated outdoor test condition for cooling.
+        # Values from typical NEEP-listed cold-climate mini-split performance
+        # data (EER/3.412 at AHRI conditions, derated at higher temps).
+        "cop_cooling_curve": [
+            (82, 4.2),   # AHRI rated conditions
+            (95, 3.5),   # typical hot day
+            (115, 2.6),  # extreme heat
+        ],
         "has_backup_heat": True,
         "notes": "EVI compressor, NEEP-listed. COP >= 1.75 at 5 deg F.",
     },
@@ -125,7 +136,11 @@ HP_PRESETS = {
         ],
         "lockout_temp_f": 0,
         "rated_capacity_btu_h": 36_000,
-        "cop_cooling": 3.5,
+        "cop_cooling_curve": [
+            (82, 3.8),
+            (95, 3.1),
+            (115, 2.3),
+        ],
         "has_backup_heat": True,
         "notes": "Typical inverter-driven cold-climate unit.",
     },
@@ -146,7 +161,11 @@ HP_PRESETS = {
         ],
         "lockout_temp_f": 15,
         "rated_capacity_btu_h": 36_000,
-        "cop_cooling": 3.2,
+        "cop_cooling_curve": [
+            (82, 3.5),
+            (95, 2.8),
+            (115, 2.1),
+        ],
         "has_backup_heat": True,
         "notes": (
             "Non-cold-climate unit. Switches to resistance below "

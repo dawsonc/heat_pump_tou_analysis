@@ -52,6 +52,7 @@ class DayData(NamedTuple):
     heat_load: npt.NDArray[np.float64]
     cool_load: npt.NDArray[np.float64]
     cop: npt.NDArray[np.float64]
+    cop_cool: npt.NDArray[np.float64]
     lockout_mask: npt.NDArray[np.bool_]
     capacity: npt.NDArray[np.float64]
     kwh_heat: npt.NDArray[np.float64]
@@ -76,6 +77,7 @@ def extract_day_data(
     heat_load: npt.NDArray[np.float64],
     cool_load: npt.NDArray[np.float64],
     cop: npt.NDArray[np.float64],
+    cop_cool: npt.NDArray[np.float64],
     lockout_mask: npt.NDArray[np.bool_],
     capacity: npt.NDArray[np.float64],
     kwh_heat: npt.NDArray[np.float64],
@@ -119,6 +121,7 @@ def extract_day_data(
         heat_load=heat_load[mask],
         cool_load=cool_load[mask],
         cop=cop[mask],
+        cop_cool=cop_cool[mask],
         lockout_mask=lockout_mask[mask],
         capacity=capacity[mask],
         kwh_heat=kwh_heat[mask],
@@ -237,6 +240,15 @@ def plot_daily_cop(
             marker=dict(color=COLOR_LOCKOUT, size=8, symbol="x"),
         ))
 
+    # Cooling COP line (only shown when cooling load exists)
+    if np.any(day_data.cool_load > 0):
+        fig.add_trace(go.Scatter(
+            x=day_data.hours, y=day_data.cop_cool,
+            mode="lines+markers", name="Cooling COP",
+            line=dict(color=COLOR_COOLING, width=2, dash="dot"),
+            marker=dict(size=5),
+        ))
+
     # COP = 1.0 reference line (resistance baseline)
     fig.add_hline(
         y=1.0, line_dash="dot", line_color=COLOR_SETPOINT,
@@ -244,7 +256,10 @@ def plot_daily_cop(
         annotation_position="top left",
     )
 
-    y_max = max(float(np.max(day_data.cop)) * 1.2, 2.0)
+    all_cops = [float(np.max(day_data.cop))]
+    if np.any(day_data.cool_load > 0):
+        all_cops.append(float(np.max(day_data.cop_cool)))
+    y_max = max(max(all_cops) * 1.2, 2.0)
     fig.update_layout(
         title=f"Heat Pump COP (lockout below {lockout_temp}\u00b0F)",
         xaxis=dict(title="Hour", **_HOUR_TICK),
@@ -363,10 +378,11 @@ def plot_cop_curve(
     cop_curve: list[tuple[float, float]],
     lockout_temp: float,
     T_out_all: npt.NDArray[np.float64],
+    cop_cooling_curve: list[tuple[float, float]] | None = None,
 ) -> go.Figure:
     """COP vs outdoor temp with TMY temperature histogram overlay."""
     # Dense temp grid for smooth COP curve
-    T_dense = np.linspace(-20, 110, 500)
+    T_dense = np.linspace(-20, 120, 500)
     temps = np.array([pt[0] for pt in cop_curve], dtype=np.float64)
     cops = np.array([pt[1] for pt in cop_curve], dtype=np.float64)
     cop_dense = np.interp(T_dense, temps, cops)
@@ -411,8 +427,33 @@ def plot_cop_curve(
         annotation_position="top right",
     )
 
+    # Cooling COP curve overlay
+    if cop_cooling_curve is not None:
+        cool_temps = np.array(
+            [pt[0] for pt in cop_cooling_curve], dtype=np.float64
+        )
+        cool_cops = np.array(
+            [pt[1] for pt in cop_cooling_curve], dtype=np.float64
+        )
+        T_cool_dense = np.linspace(60, 120, 300)
+        cop_cool_dense = np.interp(T_cool_dense, cool_temps, cool_cops)
+        cop_cool_dense = np.maximum(cop_cool_dense, 1.0)
+
+        fig.add_trace(go.Scatter(
+            x=T_cool_dense, y=cop_cool_dense,
+            mode="lines", name="Cooling COP",
+            line=dict(color=COLOR_COOLING, width=3, dash="dot"),
+        ), secondary_y=False)
+
+        fig.add_trace(go.Scatter(
+            x=[pt[0] for pt in cop_cooling_curve],
+            y=[pt[1] for pt in cop_cooling_curve],
+            mode="markers", name="Cooling Ref Points",
+            marker=dict(color=COLOR_COOLING, size=10, symbol="diamond"),
+        ), secondary_y=False)
+
     fig.update_layout(
-        title="COP Curve with TMY Temperature Distribution",
+        title="COP Curves with TMY Temperature Distribution",
         xaxis_title="Outdoor Temperature (\u00b0F)",
         height=400,
         **_LAYOUT_DEFAULTS,
@@ -488,7 +529,8 @@ def build_hourly_table(day_data: DayData) -> dict[str, list]:
         "T_out (\u00b0F)": [round(v, 1) for v in day_data.T_out],
         "Heat Load (BTU/h)": [round(v, 0) for v in day_data.heat_load],
         "Cool Load (BTU/h)": [round(v, 0) for v in day_data.cool_load],
-        "COP": [round(v, 2) for v in day_data.cop],
+        "COP (Heat)": [round(v, 2) for v in day_data.cop],
+        "COP (Cool)": [round(v, 2) for v in day_data.cop_cool],
         "Lockout": day_data.lockout_mask.tolist(),
         "HP Capacity (BTU/h)": [round(v, 0) for v in day_data.capacity],
         "kWh HP": [round(v, 3) for v in kwh_hp_only],

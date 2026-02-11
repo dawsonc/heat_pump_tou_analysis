@@ -16,6 +16,7 @@ from model import (
     BTU_PER_KWH,
     HPEnergy,
     compute_capacity,
+    compute_cooling_cop,
     compute_cooling_load,
     compute_cop,
     compute_gas_energy,
@@ -204,6 +205,73 @@ class TestComputeCop:
 
 
 # ---------------------------------------------------------------------------
+# TestComputeCoolingCop
+# ---------------------------------------------------------------------------
+
+
+class TestComputeCoolingCop:
+    """Tests for compute_cooling_cop piecewise-linear interpolation."""
+
+    @pytest.fixture
+    def default_cooling_curve(self) -> list[tuple[float, float]]:
+        """Cold-climate Hyper-Heat cooling COP curve."""
+        return [(82, 4.2), (95, 3.5), (115, 2.6)]
+
+    def test_at_reference_points(self, default_cooling_curve) -> None:
+        """COP matches curve exactly at reference temperatures."""
+        T_out = np.array([82.0, 95.0, 115.0])
+        cop = compute_cooling_cop(T_out, default_cooling_curve)
+        np.testing.assert_array_almost_equal(cop, [4.2, 3.5, 2.6])
+
+    def test_interpolation_between_points(self, default_cooling_curve) -> None:
+        """Linear interpolation between reference points."""
+        # Midpoint of 82-95 segment: T=88.5
+        # COP = 4.2 + (3.5 - 4.2) * (88.5 - 82) / (95 - 82) = 4.2 - 0.35 = 3.85
+        T_out = np.array([88.5])
+        cop = compute_cooling_cop(T_out, default_cooling_curve)
+        expected = 4.2 + (3.5 - 4.2) * (88.5 - 82) / (95 - 82)
+        assert cop[0] == pytest.approx(expected)
+
+    def test_clamped_below_lowest_ref(self, default_cooling_curve) -> None:
+        """Below 82 deg F, COP clamps at max (best efficiency)."""
+        T_out = np.array([60.0, 70.0, 82.0])
+        cop = compute_cooling_cop(T_out, default_cooling_curve)
+        np.testing.assert_array_almost_equal(cop, [4.2, 4.2, 4.2])
+
+    def test_clamped_above_highest_ref(self, default_cooling_curve) -> None:
+        """Above 115 deg F, COP clamps at min."""
+        T_out = np.array([115.0, 120.0, 130.0])
+        cop = compute_cooling_cop(T_out, default_cooling_curve)
+        np.testing.assert_array_almost_equal(cop, [2.6, 2.6, 2.6])
+
+    def test_cop_never_below_one(self, default_cooling_curve) -> None:
+        """COP floor is 1.0 across all temperatures."""
+        T_out = np.linspace(50, 150, 500)
+        cop = compute_cooling_cop(T_out, default_cooling_curve)
+        assert np.all(cop >= 1.0)
+
+    def test_higher_temp_lower_cop(self, default_cooling_curve) -> None:
+        """COP monotonically decreases within reference range."""
+        T_out = np.linspace(82, 115, 100)
+        cop = compute_cooling_cop(T_out, default_cooling_curve)
+        assert np.all(np.diff(cop) <= 0)
+
+    def test_two_point_curve(self) -> None:
+        """Correct interpolation with a 2-point cooling COP curve."""
+        curve = [(82, 3.5), (95, 2.8)]
+        T_out = np.array([82.0, 88.5, 95.0, 100.0, 70.0])
+        cop = compute_cooling_cop(T_out, curve)
+        expected = [
+            3.5,
+            3.5 + (2.8 - 3.5) * (88.5 - 82) / (95 - 82),
+            2.8,
+            2.8,  # clamped above 95
+            3.5,  # clamped below 82
+        ]
+        np.testing.assert_array_almost_equal(cop, expected)
+
+
+# ---------------------------------------------------------------------------
 # TestComputeCapacity
 # ---------------------------------------------------------------------------
 
@@ -298,6 +366,25 @@ class TestComputeHpEnergy:
         expected_cool = 12_600.0 / (3.8 * BTU_PER_KWH)
         assert result.kwh_cool[0] == pytest.approx(expected_cool)
         assert result.kwh_heat[0] == pytest.approx(0.0)
+
+    def test_cooling_with_array_cop(self) -> None:
+        """Cooling COP varies per hour — higher COP means less kWh."""
+        cool_load = np.array([12_600.0, 12_600.0])
+        cop_cool = np.array([4.0, 3.0])
+        result = compute_hp_energy(
+            heat_load=np.zeros(2),
+            cool_load=cool_load,
+            cop=np.array([3.5, 3.5]),
+            cop_cool=cop_cool,
+            capacity=np.array([36_000.0, 36_000.0]),
+            lockout_mask=np.array([False, False]),
+        )
+        expected_0 = 12_600.0 / (4.0 * BTU_PER_KWH)
+        expected_1 = 12_600.0 / (3.0 * BTU_PER_KWH)
+        assert result.kwh_cool[0] == pytest.approx(expected_0)
+        assert result.kwh_cool[1] == pytest.approx(expected_1)
+        # Higher COP -> less kWh
+        assert result.kwh_cool[0] < result.kwh_cool[1]
 
     def test_lockout_full_backup(self) -> None:
         """During lockout, all heating goes through resistance (COP=1.0)."""
