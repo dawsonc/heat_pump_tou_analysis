@@ -40,8 +40,20 @@ All preset values are sourced from docs/spec.md and cited references:
 DEFAULT_T_SET_HEAT_F = 68
 DEFAULT_T_SET_COOL_F = 75
 
-# Gas rate — approximate MA all-in winter residential rate (heating)
-DEFAULT_GAS_RATE_PER_THERM = 0.9477 + 0.9319 + 0.0691 - 0.0099 + 0.0 + 0.4170 + 0.0833 + 0.0558
+# Gas rates — approximate MA all-in residential rates.
+# Winter rate reflects higher supply costs during heating season.
+# Component breakdown (winter): supply $0.9477, delivery $0.9319,
+#   efficiency $0.0691, revenue decoupling -$0.0099, LDAC $0.0,
+#   energy efficiency $0.4170, RPS $0.0833, clean energy $0.0558.
+# Summer rates are typically 20-30% lower due to reduced supply costs.
+DEFAULT_GAS_WINTER_RATE_PER_THERM = (
+    0.9477 + 0.9319 + 0.0691 - 0.0099 + 0.0 + 0.4170 + 0.0833 + 0.0558
+)
+DEFAULT_GAS_SUMMER_RATE_PER_THERM = 1.80
+
+# Backward compatibility alias: flat rate equals the winter rate.
+DEFAULT_GAS_RATE_PER_THERM = DEFAULT_GAS_WINTER_RATE_PER_THERM
+
 DEFAULT_GAS_MONTHLY_CHARGE = 9.00
 
 # ---------------------------------------------------------------------------
