@@ -11,7 +11,7 @@ supports user-defined custom TOU schedules.
 Public API:
 - get_season(month) -> 'summer' or 'winter'
 - tou_lookup(months, hours_of_day, schedule) -> (N,) rate array in $/kWh
-- FLAT_RATE, EVERSOURCE_R1HP, TOU_PEAK_SAVER -- preset RateSchedule dicts
+- FLAT_RATE, EVERSOURCE_R1HP, TOU_ILLUSTRATIVE_TOU -- preset RateSchedule dicts
 - RATE_PRESETS -- name -> RateSchedule lookup
 - CUSTOM_TOU_TEMPLATE -- example multi-tier schedule
 - schedule_type(schedule) -> 'flat' or 'tou'
@@ -74,43 +74,34 @@ _ALL_HOURS = list(range(24))
 # Preset schedules
 # ---------------------------------------------------------------------------
 
-# Approximate MA all-in residential rate (~$0.30/kWh).
-# Customer charge matches Eversource R-1 ($10.00/month).
+# Approximate MA all-in residential rate
 FLAT_RATE: RateSchedule = {
     "name": "Flat Rate",
-    "customer_charge": 10.00,
+    "customer_charge": 7.50,
     "summer": {
         "tiers": {
-            "all": {"price": 0.30, "hours": _ALL_HOURS},
+            "all": {"price": 0.15065 + 0.09591, "hours": _ALL_HOURS},
         },
     },
     "winter": {
         "tiers": {
-            "all": {"price": 0.30, "hours": _ALL_HOURS},
+            "all": {"price": 0.15065 + 0.09591, "hours": _ALL_HOURS},
         },
     },
 }
 
 # Eversource R-1HP seasonal heat pump rate (Eastern MA).
-# Summer: standard R-1 residential all-in rate (~$0.30/kWh).
-# Winter: ~$0.07/kWh delivery savings -> ~$0.23/kWh all-in.
-#   Transmission: $0.04545 -> $0.01492/kWh (saves ~$0.031).
-#   Distribution also reduced (additional ~$0.04 savings).
-# Customer charge: $10.00/month (same as standard R-1).
-# Source: Mass.gov, Eversource tariff filings.
-# Note: values are approximate all-in rates; users should verify
-# against their actual bills.
 EVERSOURCE_R1HP: RateSchedule = {
     "name": "Eversource R-1HP",
     "customer_charge": 10.00,
     "summer": {
         "tiers": {
-            "standard": {"price": 0.30, "hours": _ALL_HOURS},
+            "standard": {"price": 0.15065 + 0.17997, "hours": _ALL_HOURS},
         },
     },
     "winter": {
         "tiers": {
-            "heat_pump": {"price": 0.23, "hours": _ALL_HOURS},
+            "heat_pump": {"price": 0.15065 + 0.03792, "hours": _ALL_HOURS},
         },
     },
 }
@@ -145,31 +136,31 @@ CUSTOM_TOU_TEMPLATE: RateSchedule = {
     },
 }
 
-# TOU Peak Saver — aggressive peak pricing, 4-9 PM on-peak.
-_PEAK_SAVER_ON = [16, 17, 18, 19, 20]
-_PEAK_SAVER_OFF = [h for h in range(24) if h not in _PEAK_SAVER_ON]
+# Illustrative TOU — aggressive peak pricing, 4-9 PM on-peak.
+_ILLUSTRATIVE_TOU_ON = [16, 17, 18, 19, 20]
+_ILLUSTRATIVE_TOU_OFF = [h for h in range(24) if h not in _ILLUSTRATIVE_TOU_ON]
 
-TOU_PEAK_SAVER: RateSchedule = {
-    "name": "TOU Peak Saver",
+TOU_ILLUSTRATIVE_TOU: RateSchedule = {
+    "name": "Illustrative TOU",
     "customer_charge": 10.00,
     "summer": {
         "tiers": {
-            "on_peak": {"price": 0.731, "hours": _PEAK_SAVER_ON},
-            "off_peak": {"price": 0.285, "hours": _PEAK_SAVER_OFF},
+            "on_peak": {"price": 0.731, "hours": _ILLUSTRATIVE_TOU_ON},
+            "off_peak": {"price": 0.285, "hours": _ILLUSTRATIVE_TOU_OFF},
         },
     },
     "winter": {
         "tiers": {
-            "on_peak": {"price": 0.478, "hours": _PEAK_SAVER_ON},
-            "off_peak": {"price": 0.286, "hours": _PEAK_SAVER_OFF},
+            "on_peak": {"price": 0.478, "hours": _ILLUSTRATIVE_TOU_ON},
+            "off_peak": {"price": 0.286, "hours": _ILLUSTRATIVE_TOU_OFF},
         },
     },
 }
 
 RATE_PRESETS: dict[str, RateSchedule] = {
-    "Flat Rate": FLAT_RATE,
+    "Eversource R-1": FLAT_RATE,
     "Eversource R-1HP": EVERSOURCE_R1HP,
-    "Illustrative TOU": TOU_PEAK_SAVER,
+    "Illustrative TOU": TOU_ILLUSTRATIVE_TOU,
 }
 
 
