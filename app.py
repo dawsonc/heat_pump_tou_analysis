@@ -405,6 +405,8 @@ def run_pipeline(T_out, months, days, hours_of_day, params):
     cost_elec_total = compute_electric_cost(hp_energy.kwh_total, rates)
     # Costs — heating-only HP electricity (for comparison with gas)
     cost_elec_heat = compute_electric_cost(hp_energy.kwh_heat, rates)
+    # Costs — cooling-only HP electricity
+    cost_elec_cool = cost_elec_total - cost_elec_heat
 
     # Path B: gas furnace
     therms = compute_gas_energy(heat_load, params["afue"])
@@ -423,6 +425,7 @@ def run_pipeline(T_out, months, days, hours_of_day, params):
         aggregate_monthly(cost_elec_total, months) + customer_charge
     )
     monthly_cost_heat_elec = aggregate_monthly(cost_elec_heat, months)
+    monthly_cost_cool_elec = aggregate_monthly(cost_elec_cool, months)
     gas_customer_charge = params.get("gas_customer_charge", 0.0)
     monthly_cost_gas = aggregate_monthly(cost_gas, months) + gas_customer_charge
     monthly_kwh_heat = aggregate_monthly(hp_energy.kwh_heat, months)
@@ -455,6 +458,7 @@ def run_pipeline(T_out, months, days, hours_of_day, params):
         # Monthly (12,) arrays
         "monthly_cost_elec": monthly_cost_elec,
         "monthly_cost_heat_elec": monthly_cost_heat_elec,
+        "monthly_cost_cool_elec": monthly_cost_cool_elec,
         "monthly_cost_gas": monthly_cost_gas,
         "monthly_kwh_heat": monthly_kwh_heat,
         "monthly_kwh_cool": monthly_kwh_cool,
@@ -566,6 +570,48 @@ def render_tab_results(results, params):
         margin=dict(t=40, b=40),
     )
     st.plotly_chart(fig_hero, use_container_width=True)
+
+    # --- Monthly Total Electricity Cost (Heating + Cooling) ---
+    st.subheader("Monthly Total Electricity Cost (Heating + Cooling)")
+
+    monthly_heat_cost = results["monthly_cost_heat_elec"]
+    monthly_cool_cost = results["monthly_cost_cool_elec"]
+
+    fig_total_cost = go.Figure()
+    fig_total_cost.add_trace(go.Bar(
+        name="Heating",
+        x=MONTH_NAMES,
+        y=monthly_heat_cost,
+        marker_color="#1f77b4",
+    ))
+    fig_total_cost.add_trace(go.Bar(
+        name="Cooling",
+        x=MONTH_NAMES,
+        y=monthly_cool_cost,
+        marker_color="#17becf",
+    ))
+    # Add total labels on top of stacked bars
+    monthly_total_cost = monthly_heat_cost + monthly_cool_cost
+    fig_total_cost.add_trace(go.Scatter(
+        x=MONTH_NAMES,
+        y=monthly_total_cost,
+        text=[f"${v:.0f}" for v in monthly_total_cost],
+        mode="text",
+        textposition="top center",
+        showlegend=False,
+    ))
+    fig_total_cost.update_layout(
+        barmode="stack",
+        yaxis_title="Electricity Cost ($)",
+        xaxis_title="Month",
+        height=450,
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02,
+            xanchor="right", x=1,
+        ),
+        margin=dict(t=40, b=40),
+    )
+    st.plotly_chart(fig_total_cost, use_container_width=True)
 
     # --- Monthly Electricity Breakdown ---
     st.subheader("Monthly Electricity Consumption Breakdown")
