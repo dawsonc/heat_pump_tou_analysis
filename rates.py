@@ -168,7 +168,7 @@ TOU_PEAK_SAVER: RateSchedule = {
 RATE_PRESETS: dict[str, RateSchedule] = {
     "Flat Rate": FLAT_RATE,
     "Eversource R-1HP": EVERSOURCE_R1HP,
-    "TOU Peak Saver": TOU_PEAK_SAVER,
+    "Illustrative TOU": TOU_PEAK_SAVER,
 }
 
 
