@@ -347,19 +347,20 @@ def compute_electric_cost(
 
 def compute_gas_cost(
     therms: npt.NDArray[np.float64],
-    gas_rate: float,
+    gas_rate: float | npt.NDArray[np.float64],
 ) -> npt.NDArray[np.float64]:
     """Compute hourly gas cost.
 
-    cost_gas[h] = therms[h] * gas_rate
+    cost_gas[h] = therms[h] * gas_rate[h]
     — spec Computation Pipeline, Path B: "cost_gas[h] = therms[h] × gas_rate"
 
     Parameters
     ----------
     therms : (N,) array
         Gas consumption in therms per hour (from compute_gas_energy).
-    gas_rate : float
-        Gas rate in $/therm.
+    gas_rate : float or (N,) array of float64
+        Gas rate in $/therm.  A scalar applies a flat rate to all hours.
+        An array (from gas_rate_lookup) applies seasonal rates per hour.
 
     Returns
     -------

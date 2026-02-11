@@ -45,7 +45,8 @@ from presets import (
     DEFAULT_BUILDING_SIZE,
     DEFAULT_GAS_FURNACE_PRESET,
     DEFAULT_GAS_MONTHLY_CHARGE,
-    DEFAULT_GAS_RATE_PER_THERM,
+    DEFAULT_GAS_SUMMER_RATE_PER_THERM,
+    DEFAULT_GAS_WINTER_RATE_PER_THERM,
     DEFAULT_HP_PRESET,
     DEFAULT_T_SET_COOL_F,
     DEFAULT_T_SET_HEAT_F,
@@ -60,6 +61,7 @@ from rates import (
     build_tou_schedule,
     extract_on_peak_hours,
     extract_tou_prices,
+    gas_rate_lookup,
     schedule_type,
     tou_lookup,
 )
@@ -308,14 +310,27 @@ def render_sidebar() -> dict:
 
     # --- Gas Furnace ---
     st.sidebar.subheader("Gas Furnace (comparison)")
-    gas_rate = st.sidebar.number_input(
-        "Gas rate ($/therm)",
-        min_value=0.00,
-        max_value=10.00,
-        value=DEFAULT_GAS_RATE_PER_THERM,
-        step=0.10,
-        format="%.2f",
-    )
+    col_gw, col_gs = st.sidebar.columns(2)
+    with col_gw:
+        gas_rate_winter = st.number_input(
+            "Winter gas ($/therm)",
+            min_value=0.00,
+            max_value=10.00,
+            value=DEFAULT_GAS_WINTER_RATE_PER_THERM,
+            step=0.10,
+            format="%.2f",
+            help="Gas rate for Nov-Apr (heating season).",
+        )
+    with col_gs:
+        gas_rate_summer = st.number_input(
+            "Summer gas ($/therm)",
+            min_value=0.00,
+            max_value=10.00,
+            value=DEFAULT_GAS_SUMMER_RATE_PER_THERM,
+            step=0.10,
+            format="%.2f",
+            help="Gas rate for May-Oct.",
+        )
     gas_customer_charge = st.sidebar.number_input(
         "Gas customer charge ($/month)",
         min_value=0.00,
@@ -345,7 +360,8 @@ def render_sidebar() -> dict:
         "hp_name": hp_name,
         "hp": hp,
         "has_backup": has_backup,
-        "gas_rate": gas_rate,
+        "gas_rate_winter": gas_rate_winter,
+        "gas_rate_summer": gas_rate_summer,
         "gas_customer_charge": gas_customer_charge,
         "furnace_name": furnace_name,
         "afue": afue,
@@ -392,7 +408,12 @@ def run_pipeline(T_out, months, days, hours_of_day, params):
 
     # Path B: gas furnace
     therms = compute_gas_energy(heat_load, params["afue"])
-    cost_gas = compute_gas_cost(therms, params["gas_rate"])
+    gas_rates = gas_rate_lookup(
+        months,
+        params["gas_rate_summer"],
+        params["gas_rate_winter"],
+    )
+    cost_gas = compute_gas_cost(therms, gas_rates)
 
     # Aggregation
     customer_charge = schedule["customer_charge"]
@@ -627,7 +648,7 @@ def render_tab_results(results, params):
 - COP degradation is piecewise-linear interpolation from reference test points.
 - TMY3 represents a "typical" year, not any specific year.
 - Backup heat (if enabled) is electric resistance only (COP = 1.0).
-- Gas comparison uses a single blended $/therm rate.
+- Gas comparison uses seasonal $/therm rates (winter Nov-Apr, summer May-Oct).
         """)
 
 

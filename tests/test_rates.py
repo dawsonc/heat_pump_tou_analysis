@@ -14,6 +14,7 @@ from rates import (
     EVERSOURCE_R1HP,
     FLAT_RATE,
     RATE_PRESETS,
+    SUMMER_MONTHS,
     TOU_PEAK_SAVER,
     RateSchedule,
     _build_hour_rate_map,
@@ -22,6 +23,7 @@ from rates import (
     build_tou_schedule,
     extract_on_peak_hours,
     extract_tou_prices,
+    gas_rate_lookup,
     get_season,
     schedule_type,
     tou_lookup,
@@ -594,3 +596,74 @@ class TestExtractHelpers:
         on, off = extract_tou_prices(TOU_PEAK_SAVER, "winter")
         assert on == pytest.approx(0.478)
         assert off == pytest.approx(0.286)
+
+
+# -------------------------------------------------------------------
+# Tests for gas_rate_lookup
+# -------------------------------------------------------------------
+
+
+class TestGasRateLookup:
+    """Tests for gas_rate_lookup seasonal gas rate mapping."""
+
+    def test_summer_months_get_summer_rate(self, months_8760: np.ndarray) -> None:
+        """Summer months (May-Oct) return the summer gas rate."""
+        rates = gas_rate_lookup(months_8760, summer_rate=1.80, winter_rate=2.50)
+        summer_mask = (months_8760 >= 5) & (months_8760 <= 10)
+        np.testing.assert_array_almost_equal(rates[summer_mask], 1.80)
+
+    def test_winter_months_get_winter_rate(self, months_8760: np.ndarray) -> None:
+        """Winter months (Nov-Apr) return the winter gas rate."""
+        rates = gas_rate_lookup(months_8760, summer_rate=1.80, winter_rate=2.50)
+        winter_mask = (months_8760 <= 4) | (months_8760 >= 11)
+        np.testing.assert_array_almost_equal(rates[winter_mask], 2.50)
+
+    def test_season_boundary_april_may(self, months_8760: np.ndarray) -> None:
+        """Last hour of April uses winter rate, first hour of May uses summer."""
+        rates = gas_rate_lookup(months_8760, summer_rate=1.80, winter_rate=2.50)
+        april_indices = np.where(months_8760 == 4)[0]
+        may_indices = np.where(months_8760 == 5)[0]
+        assert rates[april_indices[-1]] == pytest.approx(2.50)
+        assert rates[may_indices[0]] == pytest.approx(1.80)
+        assert may_indices[0] == april_indices[-1] + 1
+
+    def test_season_boundary_october_november(self, months_8760: np.ndarray) -> None:
+        """Last hour of October uses summer rate, first of November uses winter."""
+        rates = gas_rate_lookup(months_8760, summer_rate=1.80, winter_rate=2.50)
+        oct_indices = np.where(months_8760 == 10)[0]
+        nov_indices = np.where(months_8760 == 11)[0]
+        assert rates[oct_indices[-1]] == pytest.approx(1.80)
+        assert rates[nov_indices[0]] == pytest.approx(2.50)
+        assert nov_indices[0] == oct_indices[-1] + 1
+
+    def test_equal_rates_produces_flat(self, months_8760: np.ndarray) -> None:
+        """When summer == winter rate, all hours have the same rate."""
+        rates = gas_rate_lookup(months_8760, summer_rate=2.50, winter_rate=2.50)
+        np.testing.assert_array_almost_equal(rates, 2.50)
+
+    def test_output_shape_and_dtype(self, months_8760: np.ndarray) -> None:
+        """Output is (8760,) float64."""
+        rates = gas_rate_lookup(months_8760, summer_rate=1.80, winter_rate=2.50)
+        assert rates.shape == (8760,)
+        assert rates.dtype == np.float64
+
+    def test_two_distinct_rates(self, months_8760: np.ndarray) -> None:
+        """Seasonal gas rates produce exactly two distinct values."""
+        rates = gas_rate_lookup(months_8760, summer_rate=1.80, winter_rate=2.50)
+        unique = np.unique(rates)
+        assert len(unique) == 2
+        np.testing.assert_array_almost_equal(sorted(unique), [1.80, 2.50])
+
+    def test_small_array(self) -> None:
+        """Works on small test arrays."""
+        months = np.array([1, 5, 10, 11])
+        rates = gas_rate_lookup(months, summer_rate=1.80, winter_rate=2.50)
+        np.testing.assert_array_almost_equal(rates, [2.50, 1.80, 1.80, 2.50])
+
+    def test_uses_summer_months_constant(self) -> None:
+        """Verify alignment with SUMMER_MONTHS constant."""
+        months = np.arange(1, 13)
+        rates = gas_rate_lookup(months, summer_rate=1.00, winter_rate=2.00)
+        for m in range(1, 13):
+            expected = 1.00 if m in SUMMER_MONTHS else 2.00
+            assert rates[m - 1] == pytest.approx(expected), f"Month {m} mismatch"

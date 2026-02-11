@@ -36,13 +36,15 @@ from presets import (
     DEFAULT_GAS_FURNACE_PRESET,
     DEFAULT_GAS_MONTHLY_CHARGE,
     DEFAULT_GAS_RATE_PER_THERM,
+    DEFAULT_GAS_SUMMER_RATE_PER_THERM,
+    DEFAULT_GAS_WINTER_RATE_PER_THERM,
     DEFAULT_HP_PRESET,
     DEFAULT_T_SET_COOL_F,
     DEFAULT_T_SET_HEAT_F,
     GAS_FURNACE_PRESETS,
     HP_PRESETS,
 )
-from rates import EVERSOURCE_R1HP, FLAT_RATE, tou_lookup
+from rates import EVERSOURCE_R1HP, FLAT_RATE, gas_rate_lookup, tou_lookup
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +319,12 @@ class TestEndToEndCostIntegration:
 
         # Path B: gas
         therms = compute_gas_energy(heat_load, afue)
-        cost_gas = compute_gas_cost(therms, DEFAULT_GAS_RATE_PER_THERM)
+        gas_rates = gas_rate_lookup(
+            months_8760,
+            DEFAULT_GAS_SUMMER_RATE_PER_THERM,
+            DEFAULT_GAS_WINTER_RATE_PER_THERM,
+        )
+        cost_gas = compute_gas_cost(therms, gas_rates)
 
         return {
             "hp_energy": hp_energy,
@@ -327,6 +334,7 @@ class TestEndToEndCostIntegration:
             "cost_heat_flat": cost_heat_flat,
             "cost_heat_ever": cost_heat_ever,
             "cost_gas": cost_gas,
+            "gas_rates": gas_rates,
             "flat_rates": flat_rates,
             "ever_rates": ever_rates,
             "months": months_8760,
@@ -399,3 +407,20 @@ class TestEndToEndCostIntegration:
         peak = compute_peak_demand_monthly(hp.kwh_total, months)
         assert np.all(peak < 50)
         assert np.all(peak >= 0)
+
+    def test_seasonal_gas_rates_applied(self, pipeline_results) -> None:
+        """Gas costs reflect seasonal rate variation."""
+        months = pipeline_results["months"]
+        gas_rates = pipeline_results["gas_rates"]
+
+        # Winter months should use winter rate
+        winter_mask = (months <= 4) | (months >= 11)
+        assert np.all(
+            gas_rates[winter_mask] == pytest.approx(DEFAULT_GAS_WINTER_RATE_PER_THERM)
+        )
+
+        # Summer months should use summer rate
+        summer_mask = (months >= 5) & (months <= 10)
+        assert np.all(
+            gas_rates[summer_mask] == pytest.approx(DEFAULT_GAS_SUMMER_RATE_PER_THERM)
+        )

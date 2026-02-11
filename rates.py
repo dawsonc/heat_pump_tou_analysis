@@ -15,6 +15,7 @@ Public API:
 - RATE_PRESETS -- name -> RateSchedule lookup
 - CUSTOM_TOU_TEMPLATE -- example multi-tier schedule
 - schedule_type(schedule) -> 'flat' or 'tou'
+- gas_rate_lookup(months, summer_rate, winter_rate) -> (N,) rate array in $/therm
 - build_flat_schedule, build_seasonal_flat_schedule, build_tou_schedule
 - extract_on_peak_hours, extract_tou_prices
 """
@@ -276,6 +277,29 @@ def tou_lookup(
         summer_rates[hours_of_day],
         winter_rates[hours_of_day],
     )
+
+
+def gas_rate_lookup(
+    months: npt.NDArray[np.integer],
+    summer_rate: float,
+    winter_rate: float,
+) -> npt.NDArray[np.float64]:
+    """Map every hour to a $/therm gas rate based on season.
+
+    Uses the same seasonal definition as electricity rates:
+    summer = May-Oct (months 5-10), winter = Nov-Apr (months 11,12,1-4).
+
+    Args:
+        months: (N,) array of month numbers (1-12), one per hour.
+        summer_rate: Gas rate in $/therm for summer months.
+        winter_rate: Gas rate in $/therm for winter months.
+
+    Returns:
+        (N,) array of $/therm rates, dtype float64.
+    """
+    months = np.asarray(months)
+    is_summer = np.isin(months, list(SUMMER_MONTHS))
+    return np.where(is_summer, summer_rate, winter_rate).astype(np.float64)
 
 
 # ---------------------------------------------------------------------------

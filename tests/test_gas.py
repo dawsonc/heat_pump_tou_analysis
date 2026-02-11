@@ -12,7 +12,12 @@ import numpy as np
 import pytest
 
 from model import BTU_PER_THERM, compute_gas_cost, compute_gas_energy
-from presets import GAS_FURNACE_PRESETS
+from presets import (
+    DEFAULT_GAS_SUMMER_RATE_PER_THERM,
+    DEFAULT_GAS_WINTER_RATE_PER_THERM,
+    GAS_FURNACE_PRESETS,
+)
+from rates import gas_rate_lookup
 
 
 # ---------------------------------------------------------------------------
@@ -168,3 +173,69 @@ class TestComputeGasCost:
         cost_func = compute_gas_cost(therms, gas_rate)
         cost_inline = therms * gas_rate
         np.testing.assert_array_equal(cost_func, cost_inline)
+
+
+# ---------------------------------------------------------------------------
+# TestSeasonalGasCost
+# ---------------------------------------------------------------------------
+
+
+class TestSeasonalGasCost:
+    """Tests for compute_gas_cost with seasonal (array) gas rates."""
+
+    def test_array_rate_accepted(self) -> None:
+        """compute_gas_cost works with an (N,) rate array."""
+        therms = np.array([1.0, 1.0])
+        rates = np.array([2.50, 1.80])
+        cost = compute_gas_cost(therms, rates)
+        np.testing.assert_array_almost_equal(cost, [2.50, 1.80])
+
+    def test_scalar_still_works(self) -> None:
+        """compute_gas_cost still works with a scalar rate (backward compat)."""
+        therms = np.array([1.0, 2.0])
+        cost = compute_gas_cost(therms, gas_rate=2.50)
+        np.testing.assert_array_almost_equal(cost, [2.50, 5.00])
+
+    def test_seasonal_pipeline(self, months_8760: np.ndarray) -> None:
+        """End-to-end: gas_rate_lookup -> compute_gas_cost with seasonal rates."""
+        therms = np.ones(8760)  # 1 therm/hour everywhere
+        rates = gas_rate_lookup(months_8760, summer_rate=1.80, winter_rate=2.50)
+        cost = compute_gas_cost(therms, rates)
+
+        summer_mask = (months_8760 >= 5) & (months_8760 <= 10)
+        np.testing.assert_array_almost_equal(cost[summer_mask], 1.80)
+        np.testing.assert_array_almost_equal(cost[~summer_mask], 2.50)
+
+    def test_winter_more_expensive_than_summer(self, months_8760: np.ndarray) -> None:
+        """With typical MA rates, winter gas cost exceeds summer for same therms."""
+        therms = np.ones(8760)
+        rates = gas_rate_lookup(
+            months_8760,
+            summer_rate=DEFAULT_GAS_SUMMER_RATE_PER_THERM,
+            winter_rate=DEFAULT_GAS_WINTER_RATE_PER_THERM,
+        )
+        cost = compute_gas_cost(therms, rates)
+        winter_mask = (months_8760 <= 4) | (months_8760 >= 11)
+        assert cost[winter_mask].mean() > cost[~winter_mask].mean()
+
+    def test_flat_rate_matches_scalar(self, months_8760: np.ndarray) -> None:
+        """When summer == winter, array rate gives same result as scalar."""
+        therms = np.random.default_rng(42).uniform(0, 2, 8760)
+        rate_val = 2.50
+        cost_scalar = compute_gas_cost(therms, gas_rate=rate_val)
+        rates_array = gas_rate_lookup(months_8760, summer_rate=rate_val, winter_rate=rate_val)
+        cost_array = compute_gas_cost(therms, rates_array)
+        np.testing.assert_array_almost_equal(cost_scalar, cost_array)
+
+    def test_shape_preserved(self, months_8760: np.ndarray) -> None:
+        """Output shape is (8760,) with seasonal rates."""
+        therms = np.ones(8760)
+        rates = gas_rate_lookup(months_8760, summer_rate=1.80, winter_rate=2.50)
+        cost = compute_gas_cost(therms, rates)
+        assert cost.shape == (8760,)
+
+    def test_default_rates_exist(self) -> None:
+        """Default seasonal gas rate constants are defined and reasonable."""
+        assert DEFAULT_GAS_WINTER_RATE_PER_THERM > 0
+        assert DEFAULT_GAS_SUMMER_RATE_PER_THERM > 0
+        assert DEFAULT_GAS_WINTER_RATE_PER_THERM > DEFAULT_GAS_SUMMER_RATE_PER_THERM
