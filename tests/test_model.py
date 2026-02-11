@@ -469,6 +469,69 @@ class TestComputeHpEnergy:
 # ---------------------------------------------------------------------------
 
 
+class TestComputeHpEnergyNoBackup:
+    """Tests for compute_hp_energy with has_backup=False."""
+
+    def test_no_backup_load_still_computed(self) -> None:
+        """load_backup is still non-zero even when has_backup=False."""
+        heat_load = np.array([40_000.0])
+        result = compute_hp_energy(
+            heat_load=heat_load,
+            cool_load=np.zeros(1),
+            cop=np.array([1.75]),
+            cop_cool=3.8,
+            capacity=np.array([25_200.0]),
+            lockout_mask=np.array([False]),
+            has_backup=False,
+        )
+        assert result.load_backup[0] == pytest.approx(14_800.0)
+
+    def test_no_backup_kwh_excludes_backup(self) -> None:
+        """kwh_heat does not include backup kWh when has_backup=False."""
+        heat_load = np.array([40_000.0])
+        result = compute_hp_energy(
+            heat_load=heat_load,
+            cool_load=np.zeros(1),
+            cop=np.array([1.75]),
+            cop_cool=3.8,
+            capacity=np.array([25_200.0]),
+            lockout_mask=np.array([False]),
+            has_backup=False,
+        )
+        expected_hp_kwh = 25_200.0 / (1.75 * BTU_PER_KWH)
+        assert result.kwh_heat[0] == pytest.approx(expected_hp_kwh)
+        assert result.kwh_total[0] == pytest.approx(expected_hp_kwh)
+
+    def test_default_has_backup_true(self) -> None:
+        """Default behavior (no argument) still includes backup."""
+        heat_load = np.array([40_000.0])
+        result = compute_hp_energy(
+            heat_load=heat_load,
+            cool_load=np.zeros(1),
+            cop=np.array([1.75]),
+            cop_cool=3.8,
+            capacity=np.array([25_200.0]),
+            lockout_mask=np.array([False]),
+        )
+        expected = 25_200.0 / (1.75 * BTU_PER_KWH) + 14_800.0 / BTU_PER_KWH
+        assert result.kwh_heat[0] == pytest.approx(expected)
+
+    def test_lockout_no_backup_zero_kwh(self) -> None:
+        """During lockout with no backup, kwh_heat is zero."""
+        heat_load = np.array([20_000.0])
+        result = compute_hp_energy(
+            heat_load=heat_load,
+            cool_load=np.zeros(1),
+            cop=np.array([1.0]),
+            cop_cool=3.8,
+            capacity=np.array([36_000.0]),
+            lockout_mask=np.array([True]),
+            has_backup=False,
+        )
+        assert result.kwh_heat[0] == pytest.approx(0.0)
+        assert result.load_backup[0] == pytest.approx(20_000.0)
+
+
 class TestIntegrationPipeline:
     """Integration tests exercising the full computation chain."""
 

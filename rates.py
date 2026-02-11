@@ -11,9 +11,12 @@ supports user-defined custom TOU schedules.
 Public API:
 - get_season(month) -> 'summer' or 'winter'
 - tou_lookup(months, hours_of_day, schedule) -> (N,) rate array in $/kWh
-- FLAT_RATE, EVERSOURCE_R1HP -- preset RateSchedule dicts
+- FLAT_RATE, EVERSOURCE_R1HP, TOU_PEAK_SAVER -- preset RateSchedule dicts
 - RATE_PRESETS -- name -> RateSchedule lookup
 - CUSTOM_TOU_TEMPLATE -- example multi-tier schedule
+- schedule_type(schedule) -> 'flat' or 'tou'
+- build_flat_schedule, build_seasonal_flat_schedule, build_tou_schedule
+- extract_on_peak_hours, extract_tou_prices
 """
 
 from __future__ import annotations
@@ -141,9 +144,31 @@ CUSTOM_TOU_TEMPLATE: RateSchedule = {
     },
 }
 
+# TOU Peak Saver — aggressive peak pricing, 4-9 PM on-peak.
+_PEAK_SAVER_ON = [16, 17, 18, 19, 20]
+_PEAK_SAVER_OFF = [h for h in range(24) if h not in _PEAK_SAVER_ON]
+
+TOU_PEAK_SAVER: RateSchedule = {
+    "name": "TOU Peak Saver",
+    "customer_charge": 10.00,
+    "summer": {
+        "tiers": {
+            "on_peak": {"price": 0.731, "hours": _PEAK_SAVER_ON},
+            "off_peak": {"price": 0.285, "hours": _PEAK_SAVER_OFF},
+        },
+    },
+    "winter": {
+        "tiers": {
+            "on_peak": {"price": 0.478, "hours": _PEAK_SAVER_ON},
+            "off_peak": {"price": 0.286, "hours": _PEAK_SAVER_OFF},
+        },
+    },
+}
+
 RATE_PRESETS: dict[str, RateSchedule] = {
     "Flat Rate": FLAT_RATE,
     "Eversource R-1HP": EVERSOURCE_R1HP,
+    "TOU Peak Saver": TOU_PEAK_SAVER,
 }
 
 
@@ -251,3 +276,120 @@ def tou_lookup(
         summer_rates[hours_of_day],
         winter_rates[hours_of_day],
     )
+
+
+# ---------------------------------------------------------------------------
+# Schedule introspection and builder helpers
+# ---------------------------------------------------------------------------
+
+
+def schedule_type(schedule: RateSchedule) -> str:
+    """Return 'flat' if all seasons have exactly 1 tier, else 'tou'."""
+    for season_key in ("summer", "winter"):
+        if len(schedule[season_key]["tiers"]) > 1:
+            return "tou"
+    return "flat"
+
+
+def extract_on_peak_hours(schedule: RateSchedule) -> list[int]:
+    """Extract on-peak hours from a TOU schedule (uses summer season).
+
+    Returns the hours of the tier named 'on_peak', or the highest-price
+    tier if no tier is named 'on_peak'.
+    """
+    tiers = schedule["summer"]["tiers"]
+    if "on_peak" in tiers:
+        return sorted(tiers["on_peak"]["hours"])
+    max_tier = max(tiers.values(), key=lambda t: t["price"])
+    return sorted(max_tier["hours"])
+
+
+def extract_tou_prices(
+    schedule: RateSchedule,
+    season: str,
+) -> tuple[float, float]:
+    """Extract (on_peak_price, off_peak_price) from a season.
+
+    Identifies on-peak as the tier named 'on_peak' or the highest-price
+    tier.  Off-peak is 'off_peak' or the lowest-price tier.
+    """
+    tiers = schedule[season]["tiers"]
+    if "on_peak" in tiers and "off_peak" in tiers:
+        return tiers["on_peak"]["price"], tiers["off_peak"]["price"]
+    prices = [(name, t["price"]) for name, t in tiers.items()]
+    prices.sort(key=lambda x: x[1])
+    return prices[-1][1], prices[0][1]
+
+
+def build_flat_schedule(
+    rate: float,
+    customer_charge: float,
+    name: str = "Custom Flat",
+) -> RateSchedule:
+    """Build a flat RateSchedule with a single rate for all hours."""
+    season: SeasonSchedule = {
+        "tiers": {"all": {"price": rate, "hours": _ALL_HOURS}},
+    }
+    return {
+        "name": name,
+        "customer_charge": customer_charge,
+        "summer": season,
+        "winter": season,
+    }
+
+
+def build_seasonal_flat_schedule(
+    summer_rate: float,
+    winter_rate: float,
+    customer_charge: float,
+    name: str = "Custom Seasonal",
+) -> RateSchedule:
+    """Build a seasonal flat schedule (one rate per season)."""
+    return {
+        "name": name,
+        "customer_charge": customer_charge,
+        "summer": {"tiers": {"all": {"price": summer_rate, "hours": _ALL_HOURS}}},
+        "winter": {"tiers": {"all": {"price": winter_rate, "hours": _ALL_HOURS}}},
+    }
+
+
+def build_tou_schedule(
+    peak_start: int,
+    peak_end: int,
+    summer_on_peak: float,
+    summer_off_peak: float,
+    winter_on_peak: float,
+    winter_off_peak: float,
+    customer_charge: float,
+    name: str = "Custom TOU",
+) -> RateSchedule:
+    """Build a TOU RateSchedule from peak hour range and rate values.
+
+    On-peak hours are *peak_start* through *peak_end* (inclusive).
+    All other hours are off-peak.
+    """
+    if peak_start > peak_end:
+        raise ValueError(
+            f"On-peak start ({peak_start}) must be <= end ({peak_end})"
+        )
+    on_peak_hours = list(range(peak_start, peak_end + 1))
+    off_peak_hours = [h for h in range(24) if h not in on_peak_hours]
+
+    def _make_season(on_price: float, off_price: float) -> SeasonSchedule:
+        tiers: dict[str, TierDef] = {
+            "on_peak": {"price": on_price, "hours": on_peak_hours},
+        }
+        if off_peak_hours:
+            tiers["off_peak"] = {"price": off_price, "hours": off_peak_hours}
+        return {"tiers": tiers}
+
+    sched: RateSchedule = {
+        "name": name,
+        "customer_charge": customer_charge,
+        "summer": _make_season(summer_on_peak, summer_off_peak),
+        "winter": _make_season(winter_on_peak, winter_off_peak),
+    }
+    # Validate completeness
+    _build_hour_rate_map(sched["summer"])
+    _build_hour_rate_map(sched["winter"])
+    return sched
