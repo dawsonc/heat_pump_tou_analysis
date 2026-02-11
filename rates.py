@@ -93,7 +93,7 @@ FLAT_RATE: RateSchedule = {
 # Eversource R-1HP seasonal heat pump rate (Eastern MA).
 EVERSOURCE_R1HP: RateSchedule = {
     "name": "Eversource R-1HP",
-    "customer_charge": 10.00,
+    "customer_charge": 7.50,
     "summer": {
         "tiers": {
             "standard": {"price": 0.15065 + 0.17997, "hours": _ALL_HOURS},
@@ -109,7 +109,7 @@ EVERSOURCE_R1HP: RateSchedule = {
 # Example multi-tier TOU schedule for the custom schedule editor.
 CUSTOM_TOU_TEMPLATE: RateSchedule = {
     "name": "Custom TOU",
-    "customer_charge": 10.00,
+    "customer_charge": 7.50,
     "summer": {
         "tiers": {
             "on_peak": {
