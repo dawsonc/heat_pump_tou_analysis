@@ -53,25 +53,28 @@ Scaffolding, configuration, and module stubs.
 
 ---
 
-## Phase 1: Weather Data
+## Phase 1: Weather Data ✅
 
 Download and parse real TMY3 data for Boston.
 
 **Deliverables**:
 - `data/boston_tmy3.csv` — 8,760 rows of real hourly dry-bulb temperatures from NREL TMY3 archive (station 725090, https://rredc.nrel.gov/solar/old_data/nsrdb/1991-2005/tmy3/)
 - `weather.py` — `load_weather()` function returning structured arrays
+- `scripts/fetch_tmy3.py` — reproducible download/conversion script (fetches from gridlab-d mirror of NREL archive)
+- `tests/test_weather.py` — 15 tests (structure, temperature plausibility, error handling)
 
 **Depends on**: Phase 0
 
-**Verification**:
+**Verification** (all passing):
 - `load_weather()` returns exactly 8,760 rows
-- January temps plausible for Boston (~15–40°F range), July temps (~60–95°F)
+- January mean 26.6°F, July mean 74.1°F — consistent with NOAA 1991–2020 normals
+- Annual range −4.0°F to 99.0°F — plausible for Boston
 - No NaN or missing values
-- Spot-check against published Boston climate normals
+- 15/15 pytest tests pass
 
 ---
 
-## Phase 2: Presets
+## Phase 2: Presets ✅
 
 Define all preset data structures from spec tables and cited sources.
 
