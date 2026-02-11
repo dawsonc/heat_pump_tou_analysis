@@ -74,7 +74,7 @@ Download and parse real TMY3 data for Boston.
 
 ---
 
-## Phase 2: Presets
+## Phase 2: Presets ✅
 
 Define all preset data structures from spec tables and cited sources.
 
