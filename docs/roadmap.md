@@ -93,7 +93,7 @@ Define all preset data structures from spec tables and cited sources.
 
 ---
 
-## Phase 3: Core Thermal Model
+## Phase 3: Core Thermal Model ✅
 
 Implement the computation pipeline from the spec.
 
@@ -101,18 +101,22 @@ Implement the computation pipeline from the spec.
 - `model.py`:
   - `compute_heating_load(T_out, UA, T_set_heat)` → `(8760,)` array
   - `compute_cooling_load(T_out, UA, T_set_cool)` → `(8760,)` array
-  - `compute_cop(T_out, cop_curve, lockout_temp)` — piecewise-linear interpolation
-  - `compute_capacity(T_out, capacity_curve)` — heating capacity derating
-  - `compute_hp_energy(heat_load, cool_load, cop, cop_cool, capacity, lockout_mask)` → kWh arrays
+  - `compute_cop(T_out, cop_curve, lockout_temp)` → `(cop, lockout_mask)` tuple via `np.interp` piecewise-linear interpolation
+  - `compute_capacity(T_out, capacity_curve, rated_capacity_btu_h)` → BTU/h array
+  - `compute_hp_energy(heat_load, cool_load, cop, cop_cool, capacity, lockout_mask)` → `HPEnergy` named tuple (kwh_heat, kwh_cool, kwh_total, load_hp, load_backup)
   - `compute_gas_energy(heat_load, afue)` → therms array
-- `tests/test_model.py` — edge cases: sub-zero temps, lockout, capacity derating, zero-load, AFUE = 100%
+  - Constants: `BTU_PER_KWH = 3412`, `BTU_PER_THERM = 100_000`
+- `tests/test_model.py` — 42 tests (6 classes): heating/cooling load, COP interpolation (lockout boundary, sub-zero, extrapolation, 2-point curve), capacity derating, HP energy (lockout, partial backup, deadband), full-pipeline integration with Boston TMY
+- `tests/test_gas.py` — 10 tests (2 classes): zero load, AFUE = 100%/80%/96%, preset ranking, gas cost formula
 
 **Depends on**: Phase 1 (weather for integration tests), Phase 2 (presets for defaults)
 
-**Verification**:
-- All `test_model.py` tests pass
+**Verification** (all passing):
+- 52 new tests pass (`pytest tests/test_model.py tests/test_gas.py -v`)
+- 112 total tests pass (no regressions in weather/rates)
 - Vectorized NumPy only — no Python for-loops over hours
 - Each formula has a comment citing the spec Computation Pipeline section
+- Boston TMY integration test: annual kWh and therms in plausible ranges
 
 ---
 
