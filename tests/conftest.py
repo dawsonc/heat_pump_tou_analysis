@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the Heat Pump TOU Calculator test suite."""
+"""Shared pytest fixtures for the Heat Pump TOU Calculator test suite.
 
 Fixtures:
 - sample_weather_df: minimal 24-row weather DataFrame for unit tests
