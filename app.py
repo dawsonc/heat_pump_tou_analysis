@@ -44,6 +44,7 @@ from presets import (
     DEFAULT_BUILDING_INSULATION,
     DEFAULT_BUILDING_SIZE,
     DEFAULT_GAS_FURNACE_PRESET,
+    DEFAULT_GAS_MONTHLY_CHARGE,
     DEFAULT_GAS_RATE_PER_THERM,
     DEFAULT_HP_PRESET,
     DEFAULT_T_SET_COOL_F,
@@ -52,7 +53,16 @@ from presets import (
     HP_PRESETS,
     INSULATION_LEVELS,
 )
-from rates import RATE_PRESETS, tou_lookup
+from rates import (
+    RATE_PRESETS,
+    build_flat_schedule,
+    build_seasonal_flat_schedule,
+    build_tou_schedule,
+    extract_on_peak_hours,
+    extract_tou_prices,
+    schedule_type,
+    tou_lookup,
+)
 from weather import load_weather
 
 st.set_page_config(page_title="Heat Pump TOU Calculator", layout="wide")
@@ -80,23 +90,172 @@ def get_weather():
 # ---------------------------------------------------------------------------
 
 
+def _render_rate_schedule_sidebar() -> tuple[str, dict]:
+    """Render rate schedule controls and return (rate_name, schedule)."""
+    st.sidebar.subheader("Rate Schedule")
+    rate_names = list(RATE_PRESETS.keys())
+    rate_name = st.sidebar.selectbox(
+        "Rate preset",
+        options=rate_names,
+        index=rate_names.index("Eversource R-1HP"),
+        help="Select a preset to populate the fields below. Edit any value.",
+    )
+    preset = RATE_PRESETS[rate_name]
+
+    # Customer charge (editable)
+    customer_charge = st.sidebar.number_input(
+        "Customer charge ($/month)",
+        min_value=0.00,
+        max_value=50.00,
+        value=preset["customer_charge"],
+        step=1.00,
+        format="%.2f",
+        key=f"elec_cust_{rate_name}",
+    )
+
+    stype = schedule_type(preset)
+
+    if stype == "flat":
+        # Single-tier per season — show summer/winter rate inputs
+        s_price = list(preset["summer"]["tiers"].values())[0]["price"]
+        w_price = list(preset["winter"]["tiers"].values())[0]["price"]
+        is_truly_flat = abs(s_price - w_price) < 0.001
+
+        if is_truly_flat:
+            rate_val = st.sidebar.number_input(
+                "Rate ($/kWh)",
+                min_value=0.00,
+                max_value=2.00,
+                value=s_price,
+                step=0.01,
+                format="%.3f",
+                key=f"flat_rate_{rate_name}",
+            )
+            schedule = build_flat_schedule(rate_val, customer_charge, rate_name)
+        else:
+            col_s, col_w = st.sidebar.columns(2)
+            with col_s:
+                summer_rate = st.number_input(
+                    "Summer ($/kWh)",
+                    min_value=0.00,
+                    max_value=2.00,
+                    value=s_price,
+                    step=0.01,
+                    format="%.3f",
+                    key=f"summer_rate_{rate_name}",
+                )
+            with col_w:
+                winter_rate = st.number_input(
+                    "Winter ($/kWh)",
+                    min_value=0.00,
+                    max_value=2.00,
+                    value=w_price,
+                    step=0.01,
+                    format="%.3f",
+                    key=f"winter_rate_{rate_name}",
+                )
+            schedule = build_seasonal_flat_schedule(
+                summer_rate, winter_rate, customer_charge, rate_name,
+            )
+    else:
+        # TOU: show on-peak hours and per-season rates
+        on_peak_hours = extract_on_peak_hours(preset)
+        peak_start_default = on_peak_hours[0] if on_peak_hours else 16
+        peak_end_default = on_peak_hours[-1] if on_peak_hours else 20
+
+        col_start, col_end = st.sidebar.columns(2)
+        with col_start:
+            peak_start = st.number_input(
+                "On-peak start (hour)",
+                min_value=0,
+                max_value=23,
+                value=peak_start_default,
+                step=1,
+                key=f"peak_start_{rate_name}",
+            )
+        with col_end:
+            peak_end = st.number_input(
+                "On-peak end (hour)",
+                min_value=0,
+                max_value=23,
+                value=peak_end_default,
+                step=1,
+                key=f"peak_end_{rate_name}",
+            )
+
+        s_on, s_off = extract_tou_prices(preset, "summer")
+        w_on, w_off = extract_tou_prices(preset, "winter")
+
+        st.sidebar.markdown("**Summer rates ($/kWh)**")
+        col_son, col_soff = st.sidebar.columns(2)
+        with col_son:
+            summer_on = st.number_input(
+                "On-peak",
+                min_value=0.00,
+                max_value=2.00,
+                value=s_on,
+                step=0.01,
+                format="%.3f",
+                key=f"s_on_{rate_name}",
+            )
+        with col_soff:
+            summer_off = st.number_input(
+                "Off-peak",
+                min_value=0.00,
+                max_value=2.00,
+                value=s_off,
+                step=0.01,
+                format="%.3f",
+                key=f"s_off_{rate_name}",
+            )
+
+        st.sidebar.markdown("**Winter rates ($/kWh)**")
+        col_won, col_woff = st.sidebar.columns(2)
+        with col_won:
+            winter_on = st.number_input(
+                "On-peak",
+                min_value=0.00,
+                max_value=2.00,
+                value=w_on,
+                step=0.01,
+                format="%.3f",
+                key=f"w_on_{rate_name}",
+            )
+        with col_woff:
+            winter_off = st.number_input(
+                "Off-peak",
+                min_value=0.00,
+                max_value=2.00,
+                value=w_off,
+                step=0.01,
+                format="%.3f",
+                key=f"w_off_{rate_name}",
+            )
+
+        try:
+            schedule = build_tou_schedule(
+                peak_start,
+                peak_end,
+                summer_on,
+                summer_off,
+                winter_on,
+                winter_off,
+                customer_charge,
+                rate_name,
+            )
+        except ValueError as exc:
+            st.sidebar.error(str(exc))
+            schedule = preset  # fall back to preset on validation error
+
+    return rate_name, schedule
+
+
 def render_sidebar() -> dict:
     """Render all sidebar controls and return selected parameters."""
     st.sidebar.header("Settings")
 
     # --- Rate Schedule ---
-    st.sidebar.subheader("Rate Schedule")
-    rate_names = list(RATE_PRESETS.keys())
-    rate_name = st.sidebar.selectbox(
-        "Rate schedule",
-        options=rate_names,
-        index=rate_names.index("Eversource R-1HP"),
-        help="Select a preset electricity rate schedule.",
-    )
-    schedule = RATE_PRESETS[rate_name]
-    st.sidebar.caption(
-        f"Customer charge: ${schedule['customer_charge']:.2f}/month"
-    )
+    rate_name, schedule = _render_rate_schedule_sidebar()
 
     # --- Building ---
     st.sidebar.subheader("Building")
@@ -114,7 +273,16 @@ def render_sidebar() -> dict:
             index=INSULATION_LEVELS.index(DEFAULT_BUILDING_INSULATION),
         )
     ua = BUILDING_PRESETS[insulation][building_size]
-    st.sidebar.metric("UA (BTU/h per \u00b0F)", f"{ua:,}")
+    st.sidebar.metric(
+        "UA (BTU/h per \u00b0F)",
+        f"{ua:,}",
+        help=(
+            "Overall heat-loss coefficient (UA). Measures the rate of "
+            "heat loss from the building in BTU/h for each \u00b0F of "
+            "temperature difference between indoors and outdoors. "
+            "Higher UA = leakier building."
+        ),
+    )
 
     # --- Heat Pump ---
     st.sidebar.subheader("Heat Pump")
@@ -127,6 +295,17 @@ def render_sidebar() -> dict:
     hp = HP_PRESETS[hp_name]
     st.sidebar.caption(hp["notes"])
 
+    has_backup = st.sidebar.checkbox(
+        "Electric resistance backup",
+        value=hp["has_backup_heat"],
+        key=f"backup_{hp_name}",
+        help=(
+            "When checked, electric resistance backup (COP=1.0) covers "
+            "any heating load the heat pump cannot serve. When unchecked, "
+            "that load becomes unmet demand."
+        ),
+    )
+
     # --- Gas Furnace ---
     st.sidebar.subheader("Gas Furnace (comparison)")
     gas_rate = st.sidebar.number_input(
@@ -136,6 +315,18 @@ def render_sidebar() -> dict:
         value=DEFAULT_GAS_RATE_PER_THERM,
         step=0.10,
         format="%.2f",
+    )
+    gas_customer_charge = st.sidebar.number_input(
+        "Gas customer charge ($/month)",
+        min_value=0.00,
+        max_value=50.00,
+        value=DEFAULT_GAS_MONTHLY_CHARGE,
+        step=1.00,
+        format="%.2f",
+        help=(
+            "Monthly fixed charge for gas service. "
+            "Added to the annual gas cost (12 months)."
+        ),
     )
     furnace_names = list(GAS_FURNACE_PRESETS.keys())
     furnace_name = st.sidebar.selectbox(
@@ -153,7 +344,9 @@ def render_sidebar() -> dict:
         "ua": ua,
         "hp_name": hp_name,
         "hp": hp,
+        "has_backup": has_backup,
         "gas_rate": gas_rate,
+        "gas_customer_charge": gas_customer_charge,
         "furnace_name": furnace_name,
         "afue": afue,
     }
@@ -185,7 +378,8 @@ def run_pipeline(T_out, months, days, hours_of_day, params):
         T_out, hp["capacity_curve"], hp["rated_capacity_btu_h"]
     )
     hp_energy = compute_hp_energy(
-        heat_load, cool_load, cop, hp["cop_cooling"], capacity, lockout_mask
+        heat_load, cool_load, cop, hp["cop_cooling"], capacity, lockout_mask,
+        has_backup=params["has_backup"],
     )
 
     # Rates
@@ -208,7 +402,8 @@ def run_pipeline(T_out, months, days, hours_of_day, params):
         aggregate_monthly(cost_elec_total, months) + customer_charge
     )
     monthly_cost_heat_elec = aggregate_monthly(cost_elec_heat, months)
-    monthly_cost_gas = aggregate_monthly(cost_gas, months)
+    gas_customer_charge = params.get("gas_customer_charge", 0.0)
+    monthly_cost_gas = aggregate_monthly(cost_gas, months) + gas_customer_charge
     monthly_kwh_heat = aggregate_monthly(hp_energy.kwh_heat, months)
     monthly_kwh_cool = aggregate_monthly(hp_energy.kwh_cool, months)
     monthly_backup_kwh = aggregate_monthly(backup_kwh, months)
@@ -217,7 +412,7 @@ def run_pipeline(T_out, months, days, hours_of_day, params):
         aggregate_annual(cost_elec_total) + 12 * customer_charge
     )
     annual_cost_heat_elec = aggregate_annual(cost_elec_heat)
-    annual_cost_gas = aggregate_annual(cost_gas)
+    annual_cost_gas = aggregate_annual(cost_gas) + 12 * gas_customer_charge
     annual_kwh = aggregate_annual(hp_energy.kwh_total)
     annual_backup_kwh = aggregate_annual(backup_kwh)
     annual_heat_kwh = aggregate_annual(hp_energy.kwh_heat)
@@ -311,7 +506,12 @@ def render_tab_results(results, params):
     with c4:
         st.metric("Total kWh (HP)", f"{results['annual_kwh']:,.0f}")
     with c5:
-        st.metric("Backup Resistance Share", f"{backup_share:.1f}%")
+        backup_label = (
+            "Backup Resistance Share"
+            if params.get("has_backup", True)
+            else "Unmet Demand Share"
+        )
+        st.metric(backup_label, f"{backup_share:.1f}%")
 
     # --- Hero Chart: Monthly Heating Cost Comparison ---
     st.subheader("Monthly Heating Cost: Heat Pump vs Gas Furnace")
@@ -360,8 +560,13 @@ def render_tab_results(results, params):
         y=monthly_hp_only_kwh,
         marker_color="#1f77b4",
     ))
+    backup_trace_name = (
+        "Backup Resistance (kWh)"
+        if params.get("has_backup", True)
+        else "Unmet Demand (kWh-equiv)"
+    )
     fig_breakdown.add_trace(go.Bar(
-        name="Backup Resistance (kWh)",
+        name=backup_trace_name,
         x=MONTH_NAMES,
         y=results["monthly_backup_kwh"],
         marker_color="#ff7f0e",
@@ -415,12 +620,13 @@ def render_tab_results(results, params):
     # --- Assumptions note ---
     with st.expander("Assumptions & Notes"):
         st.markdown("""
-- Heating cost comparison is **variable cost only** (no customer/fixed charges).
+- Gas cost includes monthly customer charge if configured in the sidebar.
+- Heating cost comparison is **variable cost only** (no electric customer charge).
 - Steady-state hourly load model; no thermal mass or setback recovery dynamics.
 - No internal or solar heat gains.
 - COP degradation is piecewise-linear interpolation from reference test points.
 - TMY3 represents a "typical" year, not any specific year.
-- Backup heat is electric resistance only (COP = 1.0).
+- Backup heat (if enabled) is electric resistance only (COP = 1.0).
 - Gas comparison uses a single blended $/therm rate.
         """)
 

@@ -215,6 +215,7 @@ def compute_hp_energy(
     cop_cool: float,
     capacity: npt.NDArray[np.float64],
     lockout_mask: npt.NDArray[np.bool_],
+    has_backup: bool = True,
 ) -> HPEnergy:
     """Compute hourly heat pump electricity consumption in kWh.
 
@@ -239,6 +240,10 @@ def compute_hp_energy(
         Available HP heating capacity in BTU/h.
     lockout_mask : (N,) array of bool
         True where HP is locked out (all load goes to backup).
+    has_backup : bool
+        If True (default), electric resistance backup covers unserved
+        load and its kWh is included in kwh_heat.  If False, load_backup
+        is still computed (as unmet demand) but not converted to kWh.
 
     Returns
     -------
@@ -253,7 +258,8 @@ def compute_hp_energy(
     load_backup = heat_load - load_hp
 
     # spec: kwh_heat[h] = load_hp[h] / (cop[h] * 3412) + load_backup[h] / 3412
-    kwh_heat = load_hp / (cop * BTU_PER_KWH) + load_backup / BTU_PER_KWH
+    backup_elec = load_backup / BTU_PER_KWH if has_backup else np.zeros_like(load_backup)
+    kwh_heat = load_hp / (cop * BTU_PER_KWH) + backup_elec
 
     # spec: kwh_cool[h] = cool_load[h] / (cop_cool * 3412)
     kwh_cool = cool_load / (cop_cool * BTU_PER_KWH)
