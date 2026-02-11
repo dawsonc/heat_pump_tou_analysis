@@ -113,25 +113,28 @@ Implement the computation pipeline from the spec.
 
 ---
 
-## Phase 4: Rate Schedules
+## Phase 4: Rate Schedules ✅
 
 Implement TOU rate lookup with seasonal variation.
 
 **Deliverables**:
 - `rates.py`:
-  - Rate schedule data structure: tiers with $/kWh, hour-of-day assignments, seasonal mappings
-  - `get_season(month)` — summer (May–Oct) vs. winter (Nov–Apr)
-  - `tou_lookup(months, hours_of_day, schedule)` → `(8760,)` rate array
-  - Preset schedules: Flat Rate ($0.30/kWh), Eversource R-1HP (from actual tariff)
-  - Custom TOU structure support
-- `tests/test_rates.py` — edge cases: season boundary (Apr 30 → May 1), midnight transitions, flat rate uniformity
+  - Rate schedule data structure: TypedDicts (`RateSchedule`, `SeasonSchedule`, `TierDef`) with $/kWh, hour-of-day assignments, seasonal mappings, and monthly customer charge ($/month)
+  - `get_season(month)` — summer (May–Oct) vs. winter (Nov–Apr), scalar and vectorized
+  - `tou_lookup(months, hours_of_day, schedule)` → `(N,)` rate array, fully vectorized NumPy
+  - `_build_hour_rate_map(season_schedule)` — validates tier completeness (no gaps/overlaps)
+  - Preset schedules: Flat Rate ($0.30/kWh), Eversource R-1HP ($0.30 summer / $0.23 winter), both with $10/month customer charge
+  - `CUSTOM_TOU_TEMPLATE` — example multi-tier on/off-peak schedule
+  - `RATE_PRESETS` dict for UI dropdown population
+- `tests/test_rates.py` — 45 tests (7 classes): season boundary (Apr 30 → May 1), midnight tier transitions, flat rate uniformity, multi-tier TOU, preset integrity, customer charge validation
+- `tests/conftest.py` — shared fixtures (`months_8760`, `hours_of_day_8760`) reusable by future phases
 
 **Depends on**: Phase 0
 
-**Verification**:
-- All `test_rates.py` tests pass
-- Eversource R-1HP rates match published tariff values
-- `tou_lookup` returns correct rates for known month/hour combos
+**Verification** (all passing):
+- 45 `test_rates.py` tests pass (`pytest tests/test_rates.py -v`)
+- Eversource R-1HP rates based on published tariff: ~$0.07/kWh winter delivery savings (transmission $0.04545→$0.01492 + distribution reduction)
+- `tou_lookup` returns correct rates for known month/hour combos, verified at season boundaries
 
 ---
 
