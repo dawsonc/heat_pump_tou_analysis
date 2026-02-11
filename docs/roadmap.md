@@ -164,49 +164,63 @@ Wire model and rate modules together into end-to-end cost calculation.
 
 ---
 
-## Phase 6: Results UI (Tab 1)
+## Phase 6: Results UI (Tab 1) ✅
 
 Build the main Streamlit interface.
 
 **Deliverables**:
 - `app.py` Tab 1:
-  - Sidebar: rate schedule selector, building size/insulation, HP preset, gas furnace inputs
-  - Summary metric cards: annual HP cost, gas cost, savings, total kWh, backup share
-  - Monthly heating cost comparison bar chart (Plotly)
-  - Monthly electricity breakdown stacked bar chart
-  - Hourly cost heatmap (24h × 365d)
+  - Sidebar (persistent across tabs): rate schedule selector (Flat Rate / Eversource R-1HP), building size × insulation dropdowns with read-only UA display, HP preset dropdown, gas furnace rate input + AFUE preset
+  - Summary metric cards (5): annual HP cost, gas heating cost, heating savings ($ and %), total kWh, backup resistance share
+  - Monthly heating cost comparison grouped bar chart (Plotly) — "hero chart" showing HP vs gas side-by-side
+  - Monthly electricity breakdown stacked bar chart (HP heating / backup resistance / cooling kWh)
+  - Hourly cost heatmap (24h × 365d) with month boundary annotations and custom hover
+  - Assumptions & Notes expander documenting key model simplifications
+  - Cached weather loading (`@st.cache_data`) for fast reruns; computation pipeline runs in <1s
 
 **Depends on**: Phase 5
 
-**Verification**:
-- App runs, sidebar controls update charts
+**Verification** (all passing):
+- `streamlit run app.py` launches, sidebar renders, charts display
 - Changing building size/insulation produces proportional cost changes
-- Changing HP preset changes backup resistance share
-- Charts render correctly with Plotly
+- Changing HP preset changes backup resistance share (Baseline >> Cold-climate)
+- Changing rate schedule updates costs and heatmap pattern
+- All 154 existing tests pass (no regressions)
 
 ---
 
-## Phase 7: Advanced Diagnostics (Tab 2)
+## Phase 7: Advanced Diagnostics (Tab 2) ✅
 
 Daily drill-down for model verification.
 
 **Deliverables**:
-- `diagnostics.py` — data extraction and Plotly figure generation
+- `diagnostics.py` (503 lines) — pure Plotly figure factory, no Streamlit dependency:
+  - `DayData` NamedTuple for 24-hour slices of all computation arrays
+  - `extract_day_data()` — boolean mask extraction with validation
+  - `plot_daily_temperature()` — outdoor temp with heating/cooling setpoint lines
+  - `plot_daily_load()` — heating and cooling load filled area plots
+  - `plot_daily_cop()` — COP line with lockout zone highlighting (red vrects)
+  - `plot_daily_energy()` — stacked bars (HP + backup kWh) with gas therms on secondary y-axis
+  - `plot_daily_cost()` — HP vs gas cost lines with TOU rate tier background bands
+  - `plot_cop_curve()` — COP vs outdoor temp with TMY temperature histogram overlay
+  - `plot_load_duration()` — sorted heating load with HP capacity overlay and backup hours annotation
+  - `build_hourly_table()` — rounded dict for DataFrame display and CSV export
+  - Consistent color palette across all plots (7 named color constants)
 - `app.py` Tab 2:
-  - Date picker (month/day)
-  - Daily plots: temperature, thermal load, COP, energy consumption, hourly cost
-  - Downloadable hourly data table (CSV)
-  - COP curve plot with TMY hour histogram
-  - Load duration curve with HP capacity overlay
+  - Month/day dropdown date picker (no year needed for TMY data)
+  - 5 daily plots rendered from diagnostics.py functions
+  - Expandable hourly data table with CSV download button
+  - COP curve and load duration curve side by side
 
 **Depends on**: Phase 6
 
-**Verification**:
-- Selecting a cold winter day shows high heating load, low COP, potential backup use
-- Selecting a mild day shows zero or low load
-- Selecting a hot summer day shows cooling load
-- CSV download works
-- COP curve matches preset reference points
+**Verification** (all passing):
+- Selecting a cold winter day (Jan 15) shows high heating load, low COP, backup use
+- Selecting a mild spring day (Apr 15) shows low/zero heating load
+- Selecting a hot summer day (Jul 15) shows cooling load, zero heating
+- CSV download button works
+- COP curve reference points match preset values (e.g., 3.5 at 47°F for Hyper-Heat)
+- Load duration curve shows correct backup hours count
 
 ---
 
