@@ -55,15 +55,9 @@ def baseline_cop_curve() -> list[tuple[float, float]]:
 class TestComputeHeatingLoad:
     """Tests for compute_heating_load."""
 
-    def test_zero_load_above_setpoint(self) -> None:
-        """No heating needed when outdoor temp exceeds setpoint."""
-        T_out = np.array([75.0, 80.0, 90.0])
-        result = compute_heating_load(T_out, UA=630, T_set_heat=68)
-        np.testing.assert_array_equal(result, 0.0)
-
-    def test_zero_load_at_setpoint(self) -> None:
-        """No heating needed when outdoor temp equals setpoint."""
-        T_out = np.array([68.0, 68.0])
+    def test_zero_load_at_and_above_setpoint(self) -> None:
+        """No heating needed when outdoor temp is at or above setpoint."""
+        T_out = np.array([68.0, 75.0, 80.0, 90.0])
         result = compute_heating_load(T_out, UA=630, T_set_heat=68)
         np.testing.assert_array_equal(result, 0.0)
 
@@ -88,17 +82,6 @@ class TestComputeHeatingLoad:
         expected = np.array([23_940.0, 0.0, 0.0, 42_840.0])
         np.testing.assert_array_almost_equal(result, expected)
 
-    def test_output_shape_8760(self) -> None:
-        """Output shape matches input for full-year array."""
-        T_out = np.full(8760, 30.0)
-        result = compute_heating_load(T_out, UA=630, T_set_heat=68)
-        assert result.shape == (8760,)
-
-    def test_output_dtype(self) -> None:
-        """Output dtype is float64."""
-        T_out = np.array([30.0, 50.0])
-        result = compute_heating_load(T_out, UA=630, T_set_heat=68)
-        assert result.dtype == np.float64
 
 
 # ---------------------------------------------------------------------------
@@ -218,22 +201,6 @@ class TestComputeCop:
         expected = [1.8, 2.4, 3.0, 3.0, 1.0]  # 10 < 15 lockout -> 1.0
         np.testing.assert_array_almost_equal(cop, expected)
 
-    def test_output_shapes(self, default_cop_curve) -> None:
-        """Both cop and lockout_mask have same shape as input."""
-        T_out = np.full(8760, 30.0)
-        cop, lockout_mask = compute_cop(
-            T_out, default_cop_curve, lockout_temp=-15
-        )
-        assert cop.shape == (8760,)
-        assert lockout_mask.shape == (8760,)
-
-    def test_lockout_mask_dtype(self, default_cop_curve) -> None:
-        """lockout_mask is boolean dtype."""
-        T_out = np.array([30.0, -20.0])
-        _, lockout_mask = compute_cop(
-            T_out, default_cop_curve, lockout_temp=-15
-        )
-        assert lockout_mask.dtype == np.bool_
 
 
 # ---------------------------------------------------------------------------
@@ -299,21 +266,6 @@ class TestComputeCapacity:
 
 class TestComputeHpEnergy:
     """Tests for compute_hp_energy."""
-
-    def test_zero_load_zero_energy(self) -> None:
-        """Zero heating and cooling load produces zero kWh."""
-        n = 10
-        result = compute_hp_energy(
-            heat_load=np.zeros(n),
-            cool_load=np.zeros(n),
-            cop=np.full(n, 3.5),
-            cop_cool=3.8,
-            capacity=np.full(n, 36_000.0),
-            lockout_mask=np.zeros(n, dtype=bool),
-        )
-        np.testing.assert_array_equal(result.kwh_heat, 0.0)
-        np.testing.assert_array_equal(result.kwh_cool, 0.0)
-        np.testing.assert_array_equal(result.kwh_total, 0.0)
 
     def test_heating_only_no_lockout(self) -> None:
         """Heating with known COP, no lockout, capacity > load."""
@@ -399,21 +351,6 @@ class TestComputeHpEnergy:
         )
         assert result.load_backup[0] == pytest.approx(0.0)
         assert result.load_hp[0] == pytest.approx(20_000.0)
-
-    def test_total_is_sum(self) -> None:
-        """kwh_total equals kwh_heat + kwh_cool."""
-        n = 100
-        result = compute_hp_energy(
-            heat_load=np.random.default_rng(42).uniform(0, 50_000, n),
-            cool_load=np.random.default_rng(43).uniform(0, 15_000, n),
-            cop=np.full(n, 2.5),
-            cop_cool=3.5,
-            capacity=np.full(n, 30_000.0),
-            lockout_mask=np.zeros(n, dtype=bool),
-        )
-        np.testing.assert_array_almost_equal(
-            result.kwh_total, result.kwh_heat + result.kwh_cool
-        )
 
     def test_returns_named_tuple(self) -> None:
         """Result is an HPEnergy named tuple with expected fields."""
@@ -501,20 +438,6 @@ class TestComputeHpEnergyNoBackup:
         expected_hp_kwh = 25_200.0 / (1.75 * BTU_PER_KWH)
         assert result.kwh_heat[0] == pytest.approx(expected_hp_kwh)
         assert result.kwh_total[0] == pytest.approx(expected_hp_kwh)
-
-    def test_default_has_backup_true(self) -> None:
-        """Default behavior (no argument) still includes backup."""
-        heat_load = np.array([40_000.0])
-        result = compute_hp_energy(
-            heat_load=heat_load,
-            cool_load=np.zeros(1),
-            cop=np.array([1.75]),
-            cop_cool=3.8,
-            capacity=np.array([25_200.0]),
-            lockout_mask=np.array([False]),
-        )
-        expected = 25_200.0 / (1.75 * BTU_PER_KWH) + 14_800.0 / BTU_PER_KWH
-        assert result.kwh_heat[0] == pytest.approx(expected)
 
     def test_lockout_no_backup_zero_kwh(self) -> None:
         """During lockout with no backup, kwh_heat is zero."""

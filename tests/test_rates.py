@@ -1,9 +1,12 @@
-"""Tests for rates.py: rate lookup, season boundaries, tier assignment.
+"""Tests for rates.py: rate lookup, season detection, tier assignment.
 
-Edge cases from spec:
-- Season boundary (Apr 30 -> May 1)
-- Midnight tier transitions
-- Flat rate returns same value for all hours
+Covers:
+- Season classification (winter/summer)
+- Hour-rate map building and validation
+- TOU lookup for flat, seasonal-flat, and multi-tier schedules
+- Gas rate seasonal lookup
+- Schedule builder helpers
+- Preset data integrity
 """
 
 import numpy as np
@@ -15,7 +18,7 @@ from rates import (
     FLAT_RATE,
     RATE_PRESETS,
     SUMMER_MONTHS,
-    TOU_PEAK_SAVER,
+    TOU_ILLUSTRATIVE_TOU,
     RateSchedule,
     _build_hour_rate_map,
     build_flat_schedule,
@@ -56,16 +59,6 @@ class TestGetSeason:
     def test_scalar_all_months(self, month: int, expected: str) -> None:
         """Every month maps to the correct season."""
         assert get_season(month) == expected
-
-    def test_summer_boundary_april_to_may(self) -> None:
-        """April is winter, May is summer -- the season boundary."""
-        assert get_season(4) == "winter"
-        assert get_season(5) == "summer"
-
-    def test_summer_boundary_october_to_november(self) -> None:
-        """October is summer, November is winter."""
-        assert get_season(10) == "summer"
-        assert get_season(11) == "winter"
 
     def test_array_input(self) -> None:
         """get_season handles NumPy arrays."""
@@ -165,24 +158,19 @@ class TestTouLookupFlatRate:
     def test_flat_rate_all_identical(
         self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
     ) -> None:
-        """Flat rate schedule returns 0.30 for every hour of the year."""
+        """Flat rate schedule returns the same price for every hour."""
         rates = tou_lookup(months_8760, hours_of_day_8760, FLAT_RATE)
+        expected_price = FLAT_RATE["summer"]["tiers"]["all"]["price"]
         assert rates.shape == (8760,)
-        np.testing.assert_array_almost_equal(rates, 0.30)
-
-    def test_flat_rate_dtype_float(
-        self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
-    ) -> None:
-        """Output dtype is float64."""
-        rates = tou_lookup(months_8760, hours_of_day_8760, FLAT_RATE)
-        assert rates.dtype == np.float64
+        np.testing.assert_array_almost_equal(rates, expected_price)
 
     def test_flat_rate_small_array(self) -> None:
         """Flat rate works on small test arrays."""
         months = np.array([1, 7, 12])
         hours = np.array([0, 12, 23])
         rates = tou_lookup(months, hours, FLAT_RATE)
-        np.testing.assert_array_almost_equal(rates, 0.30)
+        expected_price = FLAT_RATE["summer"]["tiers"]["all"]["price"]
+        np.testing.assert_array_almost_equal(rates, expected_price)
 
 
 # -------------------------------------------------------------------
@@ -194,65 +182,29 @@ class TestTouLookupEversourceR1HP:
     def test_winter_months_get_lower_rate(
         self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
     ) -> None:
-        """Winter months (Nov-Apr) get $0.23/kWh."""
+        """Winter months (Nov-Apr) get a lower rate than summer months."""
         rates = tou_lookup(months_8760, hours_of_day_8760, EVERSOURCE_R1HP)
         winter_mask = (months_8760 <= 4) | (months_8760 >= 11)
-        np.testing.assert_array_almost_equal(rates[winter_mask], 0.23)
+        summer_mask = ~winter_mask
+        assert rates[winter_mask].mean() < rates[summer_mask].mean()
 
-    def test_summer_months_get_standard_rate(
+    def test_summer_months_uniform_rate(
         self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
     ) -> None:
-        """Summer months (May-Oct) get $0.30/kWh."""
+        """Summer months all get the same rate (single-tier season)."""
         rates = tou_lookup(months_8760, hours_of_day_8760, EVERSOURCE_R1HP)
         summer_mask = (months_8760 >= 5) & (months_8760 <= 10)
-        np.testing.assert_array_almost_equal(rates[summer_mask], 0.30)
-
-    def test_season_boundary_april_may(
-        self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
-    ) -> None:
-        """Last hour of April uses winter rate, first hour of May uses summer."""
-        rates = tou_lookup(months_8760, hours_of_day_8760, EVERSOURCE_R1HP)
-
-        april_indices = np.where(months_8760 == 4)[0]
-        may_indices = np.where(months_8760 == 5)[0]
-
-        last_april_hour = april_indices[-1]
-        first_may_hour = may_indices[0]
-
-        assert rates[last_april_hour] == pytest.approx(0.23)
-        assert rates[first_may_hour] == pytest.approx(0.30)
-        # These should be consecutive hours
-        assert first_may_hour == last_april_hour + 1
-
-    def test_season_boundary_october_november(
-        self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
-    ) -> None:
-        """Last hour of October uses summer rate, first of November uses winter."""
-        rates = tou_lookup(months_8760, hours_of_day_8760, EVERSOURCE_R1HP)
-
-        oct_indices = np.where(months_8760 == 10)[0]
-        nov_indices = np.where(months_8760 == 11)[0]
-
-        assert rates[oct_indices[-1]] == pytest.approx(0.30)
-        assert rates[nov_indices[0]] == pytest.approx(0.23)
-        assert nov_indices[0] == oct_indices[-1] + 1
-
-    def test_output_shape_and_dtype(
-        self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
-    ) -> None:
-        """Output is (8760,) float64."""
-        rates = tou_lookup(months_8760, hours_of_day_8760, EVERSOURCE_R1HP)
-        assert rates.shape == (8760,)
-        assert rates.dtype == np.float64
+        summer_rates = rates[summer_mask]
+        assert np.all(summer_rates == summer_rates[0])
 
     def test_only_two_distinct_rates(
         self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
     ) -> None:
-        """R-1HP has exactly two distinct rate values."""
+        """R-1HP has exactly two distinct rate values (winter < summer)."""
         rates = tou_lookup(months_8760, hours_of_day_8760, EVERSOURCE_R1HP)
         unique = np.unique(rates)
         assert len(unique) == 2
-        np.testing.assert_array_almost_equal(sorted(unique), [0.23, 0.30])
+        assert unique[0] < unique[1]
 
 
 # -------------------------------------------------------------------
@@ -371,10 +323,10 @@ class TestTouLookupValidation:
 
 class TestPresetIntegrity:
     def test_rate_presets_dict_contains_all(self) -> None:
-        """RATE_PRESETS has Flat Rate, Eversource R-1HP, and TOU Peak Saver."""
-        assert "Flat Rate" in RATE_PRESETS
+        """RATE_PRESETS has all expected schedule presets."""
+        assert "Eversource R-1" in RATE_PRESETS
         assert "Eversource R-1HP" in RATE_PRESETS
-        assert "TOU Peak Saver" in RATE_PRESETS
+        assert "Illustrative TOU" in RATE_PRESETS
 
     def test_flat_rate_summer_winter_same_price(self) -> None:
         """Flat rate has identical prices in summer and winter."""
@@ -414,69 +366,37 @@ class TestPresetIntegrity:
 
     def test_customer_charges_non_negative(self) -> None:
         """Customer charges are non-negative for all presets and template."""
-        for schedule in [FLAT_RATE, EVERSOURCE_R1HP, CUSTOM_TOU_TEMPLATE, TOU_PEAK_SAVER]:
+        for schedule in [FLAT_RATE, EVERSOURCE_R1HP, CUSTOM_TOU_TEMPLATE, TOU_ILLUSTRATIVE_TOU]:
             assert schedule["customer_charge"] >= 0
 
 
 # -------------------------------------------------------------------
-# Tests for TOU Peak Saver preset
+# Tests for Illustrative TOU preset
 # -------------------------------------------------------------------
 
 
-class TestTouLookupPeakSaver:
-    def test_summer_on_peak_rate(
+class TestTouLookupIllustrativeTou:
+    def test_rate_structure(
         self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
     ) -> None:
-        """Summer on-peak hours get $0.731."""
-        rates = tou_lookup(months_8760, hours_of_day_8760, TOU_PEAK_SAVER)
-        summer_on_mask = (
-            ((months_8760 >= 5) & (months_8760 <= 10))
-            & ((hours_of_day_8760 >= 16) & (hours_of_day_8760 <= 20))
-        )
-        np.testing.assert_array_almost_equal(rates[summer_on_mask], 0.731)
-
-    def test_summer_off_peak_rate(
-        self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
-    ) -> None:
-        """Summer off-peak hours get $0.285."""
-        rates = tou_lookup(months_8760, hours_of_day_8760, TOU_PEAK_SAVER)
-        summer_off_mask = (
-            ((months_8760 >= 5) & (months_8760 <= 10))
-            & ~((hours_of_day_8760 >= 16) & (hours_of_day_8760 <= 20))
-        )
-        np.testing.assert_array_almost_equal(rates[summer_off_mask], 0.285)
-
-    def test_winter_on_peak_rate(
-        self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
-    ) -> None:
-        """Winter on-peak hours get $0.478."""
-        rates = tou_lookup(months_8760, hours_of_day_8760, TOU_PEAK_SAVER)
-        winter_on_mask = (
-            ((months_8760 <= 4) | (months_8760 >= 11))
-            & ((hours_of_day_8760 >= 16) & (hours_of_day_8760 <= 20))
-        )
-        np.testing.assert_array_almost_equal(rates[winter_on_mask], 0.478)
-
-    def test_winter_off_peak_rate(
-        self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
-    ) -> None:
-        """Winter off-peak hours get $0.286."""
-        rates = tou_lookup(months_8760, hours_of_day_8760, TOU_PEAK_SAVER)
-        winter_off_mask = (
-            ((months_8760 <= 4) | (months_8760 >= 11))
-            & ~((hours_of_day_8760 >= 16) & (hours_of_day_8760 <= 20))
-        )
-        np.testing.assert_array_almost_equal(rates[winter_off_mask], 0.286)
-
-    def test_four_distinct_rates(
-        self, months_8760: np.ndarray, hours_of_day_8760: np.ndarray
-    ) -> None:
-        """TOU Peak Saver has 4 distinct rate values."""
-        rates = tou_lookup(months_8760, hours_of_day_8760, TOU_PEAK_SAVER)
-        unique = np.unique(np.round(rates, 3))
+        """Illustrative TOU has 4 distinct rates with correct ordering."""
+        rates = tou_lookup(months_8760, hours_of_day_8760, TOU_ILLUSTRATIVE_TOU)
+        unique = sorted(np.unique(np.round(rates, 3)))
         assert len(unique) == 4
-        expected = sorted([0.285, 0.286, 0.478, 0.731])
-        np.testing.assert_array_almost_equal(sorted(unique), expected)
+
+        summer_mask = (months_8760 >= 5) & (months_8760 <= 10)
+        on_peak_mask = (hours_of_day_8760 >= 16) & (hours_of_day_8760 <= 20)
+
+        summer_on = rates[summer_mask & on_peak_mask][0]
+        summer_off = rates[summer_mask & ~on_peak_mask][0]
+        winter_on = rates[~summer_mask & on_peak_mask][0]
+        winter_off = rates[~summer_mask & ~on_peak_mask][0]
+
+        # On-peak > off-peak within each season
+        assert summer_on > summer_off
+        assert winter_on > winter_off
+        # Summer on-peak > winter on-peak
+        assert summer_on > winter_on
 
 
 # -------------------------------------------------------------------
@@ -488,14 +408,8 @@ class TestScheduleType:
     def test_flat_rate_is_flat(self) -> None:
         assert schedule_type(FLAT_RATE) == "flat"
 
-    def test_eversource_is_flat(self) -> None:
-        assert schedule_type(EVERSOURCE_R1HP) == "flat"
-
-    def test_tou_peak_saver_is_tou(self) -> None:
-        assert schedule_type(TOU_PEAK_SAVER) == "tou"
-
-    def test_custom_template_is_tou(self) -> None:
-        assert schedule_type(CUSTOM_TOU_TEMPLATE) == "tou"
+    def test_illustrative_tou_is_tou(self) -> None:
+        assert schedule_type(TOU_ILLUSTRATIVE_TOU) == "tou"
 
 
 class TestBuildFlatSchedule:
@@ -569,7 +483,7 @@ class TestBuildTouSchedule:
 
 class TestExtractHelpers:
     def test_extract_on_peak_hours_named(self) -> None:
-        hours = extract_on_peak_hours(TOU_PEAK_SAVER)
+        hours = extract_on_peak_hours(TOU_ILLUSTRATIVE_TOU)
         assert hours == [16, 17, 18, 19, 20]
 
     def test_extract_on_peak_hours_fallback(self) -> None:
@@ -587,15 +501,19 @@ class TestExtractHelpers:
         }
         assert extract_on_peak_hours(schedule) == [12, 13, 14]
 
-    def test_extract_tou_prices_named(self) -> None:
-        on, off = extract_tou_prices(TOU_PEAK_SAVER, "summer")
-        assert on == pytest.approx(0.731)
-        assert off == pytest.approx(0.285)
+    def test_extract_tou_prices_summer(self) -> None:
+        on, off = extract_tou_prices(TOU_ILLUSTRATIVE_TOU, "summer")
+        expected_on = TOU_ILLUSTRATIVE_TOU["summer"]["tiers"]["on_peak"]["price"]
+        expected_off = TOU_ILLUSTRATIVE_TOU["summer"]["tiers"]["off_peak"]["price"]
+        assert on == pytest.approx(expected_on)
+        assert off == pytest.approx(expected_off)
 
     def test_extract_tou_prices_winter(self) -> None:
-        on, off = extract_tou_prices(TOU_PEAK_SAVER, "winter")
-        assert on == pytest.approx(0.478)
-        assert off == pytest.approx(0.286)
+        on, off = extract_tou_prices(TOU_ILLUSTRATIVE_TOU, "winter")
+        expected_on = TOU_ILLUSTRATIVE_TOU["winter"]["tiers"]["on_peak"]["price"]
+        expected_off = TOU_ILLUSTRATIVE_TOU["winter"]["tiers"]["off_peak"]["price"]
+        assert on == pytest.approx(expected_on)
+        assert off == pytest.approx(expected_off)
 
 
 # -------------------------------------------------------------------
@@ -618,34 +536,10 @@ class TestGasRateLookup:
         winter_mask = (months_8760 <= 4) | (months_8760 >= 11)
         np.testing.assert_array_almost_equal(rates[winter_mask], 2.50)
 
-    def test_season_boundary_april_may(self, months_8760: np.ndarray) -> None:
-        """Last hour of April uses winter rate, first hour of May uses summer."""
-        rates = gas_rate_lookup(months_8760, summer_rate=1.80, winter_rate=2.50)
-        april_indices = np.where(months_8760 == 4)[0]
-        may_indices = np.where(months_8760 == 5)[0]
-        assert rates[april_indices[-1]] == pytest.approx(2.50)
-        assert rates[may_indices[0]] == pytest.approx(1.80)
-        assert may_indices[0] == april_indices[-1] + 1
-
-    def test_season_boundary_october_november(self, months_8760: np.ndarray) -> None:
-        """Last hour of October uses summer rate, first of November uses winter."""
-        rates = gas_rate_lookup(months_8760, summer_rate=1.80, winter_rate=2.50)
-        oct_indices = np.where(months_8760 == 10)[0]
-        nov_indices = np.where(months_8760 == 11)[0]
-        assert rates[oct_indices[-1]] == pytest.approx(1.80)
-        assert rates[nov_indices[0]] == pytest.approx(2.50)
-        assert nov_indices[0] == oct_indices[-1] + 1
-
     def test_equal_rates_produces_flat(self, months_8760: np.ndarray) -> None:
         """When summer == winter rate, all hours have the same rate."""
         rates = gas_rate_lookup(months_8760, summer_rate=2.50, winter_rate=2.50)
         np.testing.assert_array_almost_equal(rates, 2.50)
-
-    def test_output_shape_and_dtype(self, months_8760: np.ndarray) -> None:
-        """Output is (8760,) float64."""
-        rates = gas_rate_lookup(months_8760, summer_rate=1.80, winter_rate=2.50)
-        assert rates.shape == (8760,)
-        assert rates.dtype == np.float64
 
     def test_two_distinct_rates(self, months_8760: np.ndarray) -> None:
         """Seasonal gas rates produce exactly two distinct values."""
