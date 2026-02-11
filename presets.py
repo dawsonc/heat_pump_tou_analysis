@@ -40,14 +40,9 @@ All preset values are sourced from docs/spec.md and cited references:
 DEFAULT_T_SET_HEAT_F = 68
 DEFAULT_T_SET_COOL_F = 75
 
-# Gas rate — approximate MA all-in residential rate (winter 2024-25).
-# Supply ~$0.85-0.95/therm + delivery ~$1.50-1.60/therm.
-# Sources: Mass.gov gas charges, EIA MA residential gas price history.
-DEFAULT_GAS_RATE_PER_THERM = 2.50
-
-# Monthly gas customer/fixed charge — default $0 to keep comparison focused
-# on variable heating cost (noted as simplification in UI per spec).
-DEFAULT_GAS_MONTHLY_CHARGE = 0.00
+# Gas rate — approximate MA all-in winter residential rate (heating)
+DEFAULT_GAS_RATE_PER_THERM = 0.9477 + 0.9319 + 0.0691 - 0.0099 + 0.0 + 0.4170 + 0.0833 + 0.0558
+DEFAULT_GAS_MONTHLY_CHARGE = 9.00
 
 # ---------------------------------------------------------------------------
 # Heat pump presets
