@@ -684,19 +684,6 @@ def render_tab_results(results, params):
     _add_month_boundaries(fig_heatmap)
     st.plotly_chart(fig_heatmap, use_container_width=True)
 
-    # --- Assumptions note ---
-    with st.expander("Assumptions & Notes"):
-        st.markdown("""
-- Gas cost includes monthly customer charge if configured in the sidebar.
-- Heating cost comparison is **variable cost only** (no electric customer charge).
-- Steady-state hourly load model; no thermal mass or setback recovery dynamics.
-- No internal or solar heat gains.
-- COP degradation is piecewise-linear interpolation from reference test points.
-- TMY3 represents a "typical" year, not any specific year.
-- Backup heat (if enabled) is electric resistance only (COP = 1.0).
-- Gas comparison uses seasonal $/therm rates (winter Nov-Apr, summer May-Oct).
-        """)
-
 
 # ---------------------------------------------------------------------------
 # Tab 2: Advanced Diagnostics
