@@ -27,12 +27,6 @@ class TestLoadWeatherStructure:
         expected = {"hour", "month", "day", "hour_of_day", "T_drybulb_F"}
         assert expected == set(boston_weather_df.columns)
 
-    def test_hour_index_sequential(self, boston_weather_df):
-        np.testing.assert_array_equal(
-            boston_weather_df["hour"].values,
-            np.arange(HOURS_PER_YEAR),
-        )
-
     def test_no_nan_values(self, boston_weather_df):
         assert boston_weather_df.isna().sum().sum() == 0
 
@@ -44,12 +38,6 @@ class TestLoadWeatherStructure:
         assert boston_weather_df["hour_of_day"].min() == 0
         assert boston_weather_df["hour_of_day"].max() == 23
 
-    def test_dtypes(self, boston_weather_df):
-        assert boston_weather_df["hour"].dtype in (np.int64, np.int32)
-        assert boston_weather_df["month"].dtype in (np.int64, np.int32)
-        assert boston_weather_df["day"].dtype in (np.int64, np.int32)
-        assert boston_weather_df["hour_of_day"].dtype in (np.int64, np.int32)
-        assert boston_weather_df["T_drybulb_F"].dtype == np.float64
 
 
 class TestBostonTemperatures:

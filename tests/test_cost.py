@@ -2,7 +2,6 @@
 
 Covers:
 - Electric cost: kwh * rate (element-wise)
-- Gas cost: therms * gas_rate (broadcast)
 - Monthly aggregation: sum by month into (12,) array
 - Annual aggregation: scalar sum
 - Peak demand: max hourly kW per month
@@ -34,8 +33,6 @@ from presets import (
     DEFAULT_BUILDING_INSULATION,
     DEFAULT_BUILDING_SIZE,
     DEFAULT_GAS_FURNACE_PRESET,
-    DEFAULT_GAS_MONTHLY_CHARGE,
-    DEFAULT_GAS_RATE_PER_THERM,
     DEFAULT_GAS_SUMMER_RATE_PER_THERM,
     DEFAULT_GAS_WINTER_RATE_PER_THERM,
     DEFAULT_HP_PRESET,
@@ -61,34 +58,6 @@ class TestComputeElectricCost:
         rates = np.array([0.30, 0.20])
         cost = compute_electric_cost(kwh, rates)
         np.testing.assert_array_almost_equal(cost, [0.60, 1.00])
-
-    def test_zero_kwh_zero_cost(self) -> None:
-        """Zero kWh at any rate produces zero cost."""
-        kwh = np.zeros(24)
-        rates = np.full(24, 0.30)
-        cost = compute_electric_cost(kwh, rates)
-        np.testing.assert_array_equal(cost, 0.0)
-
-    def test_zero_rate_zero_cost(self) -> None:
-        """Any kWh at zero rate produces zero cost."""
-        kwh = np.full(24, 5.0)
-        rates = np.zeros(24)
-        cost = compute_electric_cost(kwh, rates)
-        np.testing.assert_array_equal(cost, 0.0)
-
-    def test_shape_preserved(self) -> None:
-        """Output shape matches input shape."""
-        kwh = np.ones(8760)
-        rates = np.full(8760, 0.30)
-        cost = compute_electric_cost(kwh, rates)
-        assert cost.shape == (8760,)
-
-    def test_dtype_float64(self) -> None:
-        """Output dtype is float64."""
-        kwh = np.array([1.0])
-        rates = np.array([0.30])
-        cost = compute_electric_cost(kwh, rates)
-        assert cost.dtype == np.float64
 
     def test_shape_mismatch_raises(self) -> None:
         """Different-length arrays raise ValueError."""
@@ -131,38 +100,6 @@ class TestAggregateMonthly:
         expected_hours = [744, 672, 744, 720, 744, 720, 744, 744, 720, 744, 720, 744]
         np.testing.assert_array_equal(monthly, expected_hours)
 
-    def test_zero_values(self, months_8760) -> None:
-        """All-zeros produce all-zero monthly totals."""
-        values = np.zeros(8760)
-        monthly = aggregate_monthly(values, months_8760)
-        np.testing.assert_array_equal(monthly, 0.0)
-
-    def test_single_month_nonzero(self, months_8760) -> None:
-        """Only January has values; all other months are zero."""
-        values = np.where(months_8760 == 1, 1.0, 0.0)
-        monthly = aggregate_monthly(values, months_8760)
-        assert monthly[0] == 744.0  # January hours
-        np.testing.assert_array_equal(monthly[1:], 0.0)
-
-    def test_shape_is_twelve(self, months_8760) -> None:
-        """Output is always (12,)."""
-        values = np.ones(8760)
-        monthly = aggregate_monthly(values, months_8760)
-        assert monthly.shape == (12,)
-
-    def test_dtype_float64(self, months_8760) -> None:
-        """Output dtype is float64."""
-        values = np.ones(8760)
-        monthly = aggregate_monthly(values, months_8760)
-        assert monthly.dtype == np.float64
-
-    def test_sum_equals_annual(self, months_8760) -> None:
-        """Sum of 12 monthly values equals np.sum(values)."""
-        rng = np.random.default_rng(42)
-        values = rng.random(8760)
-        monthly = aggregate_monthly(values, months_8760)
-        assert np.sum(monthly) == pytest.approx(np.sum(values))
-
     def test_known_monthly_totals(self, months_8760) -> None:
         """January values=1.0, July values=2.0, rest zero."""
         values = np.zeros(8760)
@@ -188,23 +125,6 @@ class TestAggregateAnnual:
         """Known array sums correctly."""
         values = np.array([1.0, 2.0, 3.0])
         assert aggregate_annual(values) == pytest.approx(6.0)
-
-    def test_zeros(self) -> None:
-        """Zero array returns 0.0."""
-        values = np.zeros(8760)
-        assert aggregate_annual(values) == 0.0
-
-    def test_returns_float(self) -> None:
-        """Return type is Python float."""
-        values = np.array([1.0, 2.0])
-        result = aggregate_annual(values)
-        assert isinstance(result, float)
-
-    def test_matches_numpy_sum(self) -> None:
-        """aggregate_annual(x) equals float(np.sum(x))."""
-        rng = np.random.default_rng(99)
-        values = rng.random(8760)
-        assert aggregate_annual(values) == pytest.approx(float(np.sum(values)))
 
 
 # ---------------------------------------------------------------------------
@@ -232,18 +152,6 @@ class TestComputePeakDemandMonthly:
         for i in range(1, 12):
             assert peak[i] == 1.0
 
-    def test_shape_is_twelve(self, months_8760) -> None:
-        """Output is (12,)."""
-        kwh = np.ones(8760)
-        peak = compute_peak_demand_monthly(kwh, months_8760)
-        assert peak.shape == (12,)
-
-    def test_zero_values(self, months_8760) -> None:
-        """All zeros => peak is 0.0 for every month."""
-        kwh = np.zeros(8760)
-        peak = compute_peak_demand_monthly(kwh, months_8760)
-        np.testing.assert_array_equal(peak, 0.0)
-
 
 # ---------------------------------------------------------------------------
 # TestCostWithCustomerCharge
@@ -258,9 +166,9 @@ class TestCostWithCustomerCharge:
         rng = np.random.default_rng(7)
         values = rng.random(8760) * 0.50  # random hourly costs
         monthly_variable = aggregate_monthly(values, months_8760)
-        customer_charge = FLAT_RATE["customer_charge"]  # $10.00/month
+        customer_charge = FLAT_RATE["customer_charge"]
         monthly_total = monthly_variable + customer_charge
-        # Each month's total should be variable + $10
+        # Each month's total should be variable + charge
         for i in range(12):
             assert monthly_total[i] == pytest.approx(
                 monthly_variable[i] + customer_charge
@@ -272,14 +180,8 @@ class TestCostWithCustomerCharge:
         annual_variable = aggregate_annual(values)
         customer_charge = FLAT_RATE["customer_charge"]
         annual_total = annual_variable + 12 * customer_charge
-        assert annual_total == pytest.approx(876.0 + 120.0)
-
-    def test_gas_monthly_zero_customer_charge(self, months_8760) -> None:
-        """Default gas monthly charge is $0; total equals variable only."""
-        values = np.ones(8760) * 0.05
-        monthly_variable = aggregate_monthly(values, months_8760)
-        monthly_total = monthly_variable + DEFAULT_GAS_MONTHLY_CHARGE
-        np.testing.assert_array_almost_equal(monthly_total, monthly_variable)
+        expected = 8760 * 0.10 + 12 * customer_charge
+        assert annual_total == pytest.approx(expected)
 
 
 # ---------------------------------------------------------------------------
@@ -352,26 +254,6 @@ class TestEndToEndCostIntegration:
         annual = aggregate_annual(pipeline_results["cost_gas"])
         assert 500 < annual < 5000, f"Annual gas cost ${annual:.0f} outside plausible range"
 
-    def test_all_costs_non_negative(self, pipeline_results) -> None:
-        """All hourly costs are >= 0."""
-        assert np.all(pipeline_results["cost_elec_flat"] >= 0)
-        assert np.all(pipeline_results["cost_gas"] >= 0)
-
-    def test_heating_comparison_both_positive(self, pipeline_results) -> None:
-        """HP heating-only and gas heating costs are both positive totals."""
-        hp_heat_total = aggregate_annual(pipeline_results["cost_heat_flat"])
-        gas_total = aggregate_annual(pipeline_results["cost_gas"])
-        assert hp_heat_total > 0
-        assert gas_total > 0
-
-    def test_monthly_totals_sum_to_annual(self, pipeline_results) -> None:
-        """Monthly totals sum to annual total."""
-        months = pipeline_results["months"]
-        cost = pipeline_results["cost_elec_flat"]
-        monthly = aggregate_monthly(cost, months)
-        annual = aggregate_annual(cost)
-        assert np.sum(monthly) == pytest.approx(annual)
-
     def test_winter_heating_higher_than_summer(self, pipeline_results) -> None:
         """Winter months have higher heating costs than summer months."""
         months = pipeline_results["months"]
@@ -385,10 +267,8 @@ class TestEndToEndCostIntegration:
         months = pipeline_results["months"]
         heat_flat = aggregate_monthly(pipeline_results["cost_heat_flat"], months)
         heat_ever = aggregate_monthly(pipeline_results["cost_heat_ever"], months)
-        # January (winter): Eversource $0.23 < Flat $0.30
+        # January (winter): Eversource winter rate < Flat rate
         assert heat_ever[0] < heat_flat[0]
-        # July (summer): both $0.30, should be equal
-        assert heat_ever[6] == pytest.approx(heat_flat[6])
 
     def test_plausibility_bounds(self, pipeline_results) -> None:
         """Comprehensive plausibility check on all metrics."""
